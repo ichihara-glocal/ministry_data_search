@@ -203,6 +203,7 @@ def load_metadata(_bq_client):
         return pd.DataFrame()
 
 def run_search(_bq_client, keyword, ministries, categories, sub_categories, years):
+    # ... (検索ロジックは変更なし)
     """
     検索クエリを実行します。
     """
@@ -246,8 +247,7 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
     else:
         final_query = base_query
         
-    # LIMIT制限を削除
-    final_query += " ORDER BY ministry, category, fiscal_year_start"
+    final_query += " ORDER BY ministry, category, fiscal_year_start LIMIT 1000" # 念のためリミット
 
     # BigQueryジョブの設定
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
@@ -309,26 +309,12 @@ def main_app(bq_client):
     """
     認証後に表示されるメインアプリケーション
     """
-    # タイトルとログアウトボタンを横並びに配置
-    col1, col2 = st.columns([6, 1])
-    with col1:
-        st.title("省庁資料検索ツール（Streamlit版）")
-    with col2:
-        st.write("")  # スペース調整
-        if st.button("ログアウト"):
-            st.session_state['authenticated'] = False
-            st.session_state['user_id'] = ""
-            st.rerun()
+    st.title("省庁資料検索ツール（Streamlit版）")
     
     # -----------------
     # 1. サイドバー (フィルタ)
     # -----------------
     st.sidebar.header("🔽 条件絞り込み")
-    
-    # キーワード入力欄を左ペインの最上部に配置
-    keyword = st.sidebar.text_input("キーワード", placeholder="キーワードを入力")
-    
-    st.sidebar.markdown("---")
     
     with st.spinner("フィルタを読み込み中..."):
         meta_df = load_metadata(bq_client)
@@ -363,6 +349,9 @@ def main_app(bq_client):
     # -----------------
     # 2. メインコンテンツ (検索と結果)
     # -----------------
+    
+    # キーワード入力
+    keyword = st.text_input("キーワード", placeholder="キーワードを入力")
     
     # 検索ボタン
     search_button = st.button("検索")
