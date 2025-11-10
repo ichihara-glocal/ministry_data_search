@@ -24,9 +24,8 @@ def get_bigquery_client():
     BigQueryクライアントを初期化します。
     """
     try:
-        creds_str = st.secrets["gcp_service_account"]
-        # ★★★ 修正: JSON文字列をPython辞書に変換する処理を追加 ★★★
-        creds_json = json.loads(creds_str) 
+        # ★★★ 修正: st.secretsがTOMLテーブルとして直接辞書を返すため、json.loads()は不要 ★★★
+        creds_json = st.secrets["gcp_service_account"] 
         
         creds = service_account.Credentials.from_service_account_info(creds_json)
         client = bigquery.Client(credentials=creds, project=creds.project_id)
