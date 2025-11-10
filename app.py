@@ -12,6 +12,21 @@ st.set_page_config(
 )
 
 # ----------------------------------------------------------------------
+# カラム名の設定（日本語表示名）
+# ----------------------------------------------------------------------
+COLUMN_NAMES = {
+    'file_id': 'ファイルID',
+    'title': '資料名',
+    'ministry': '省庁',
+    'fiscal_year_start': '年度',
+    'category': 'カテゴリ',
+    'sub_category': '資料形式',
+    'file_page': 'ページ',
+    'source_url': 'URL',
+    'content_text': '本文'
+}
+
+# ----------------------------------------------------------------------
 # BigQuery 接続
 # ----------------------------------------------------------------------
 
@@ -200,6 +215,8 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
     
     try:
         df = _bq_client.query(final_query, job_config=job_config).to_dataframe()
+        # カラム名を日本語に変換
+        df = df.rename(columns=COLUMN_NAMES)
         return df
     except Exception as e:
         st.error(f"検索エラー: {e}")
@@ -238,15 +255,7 @@ def main_app(bq_client):
     """
     認証後に表示されるメインアプリケーション
     """
-    col1, col2 = st.columns([6, 1])
-    with col1:
-        st.title("省庁資料検索ツール（Streamlit版）")
-    with col2:
-        st.write("")
-        if st.button("ログアウト"):
-            st.session_state['authenticated'] = False
-            st.session_state['user_id'] = ""
-            st.rerun()
+    st.title("省庁資料検索ツール（Streamlit版）")
     
     # サイドバー (フィルタ)
     st.sidebar.header("🔽 条件絞り込み")
@@ -280,12 +289,23 @@ def main_app(bq_client):
     )
 
     st.sidebar.markdown("---")
-    if st.sidebar.button("フィルタをリセット"):
+    
+    # 検索ボタン（赤色）
+    search_button = st.sidebar.button("🔍 検索", type="primary", use_container_width=True)
+    
+    st.sidebar.markdown("")
+    
+    if st.sidebar.button("フィルタをリセット", use_container_width=True):
+        st.rerun()
+    
+    st.sidebar.markdown("")
+    
+    if st.sidebar.button("ログアウト", use_container_width=True):
+        st.session_state['authenticated'] = False
+        st.session_state['user_id'] = ""
         st.rerun()
 
-    # メインコンテンツ (検索と結果)
-    search_button = st.button("検索")
-    
+    # メインコンテンツ (検索結果)
     st.markdown("---")
 
     if search_button:
@@ -294,7 +314,8 @@ def main_app(bq_client):
             
             if not results_df.empty:
                 page_count = len(results_df)
-                file_count = results_df['file_id'].nunique()
+                # 日本語カラム名に変更後は 'ファイルID' を使用
+                file_count = results_df[COLUMN_NAMES['file_id']].nunique()
                 
                 st.success(f"{file_count}ファイル・{page_count}ページ ヒットしました")
                 
@@ -303,7 +324,8 @@ def main_app(bq_client):
                     sub_categories, [str(y) for y in years], file_count, page_count
                 )
                 
-                st.dataframe(results_df)
+                # データフレームを縦長表示（高さ2000px）
+                st.dataframe(results_df, height=2000, use_container_width=True)
                 
             else:
                 st.info("該当する結果が見つかりませんでした。")
