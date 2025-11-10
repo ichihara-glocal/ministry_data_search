@@ -32,7 +32,7 @@ def get_bigquery_client():
         # BigQueryクライアントの初期化時にプロジェクトIDを明示的に指定
         client = bigquery.Client(credentials=creds, project=project_id)
 
-        # ★★★ 修正1: クライアント初期化後、実際にプロジェクトのリストを取得して接続をテストする ★★★
+        # ★★★ クライアント初期化後、実際にプロジェクトのリストを取得して接続をテストする ★★★
         # ジョブを投入する権限 (bigquery.jobUser) がないとここで失敗する
         client.list_projects(max_results=1) 
         
@@ -56,6 +56,7 @@ if 'user_id' not in st.session_state:
 def log_login_to_bigquery(_bq_client, user_id, status):
     """
     ログイン試行ログをBigQueryのconfigデータセットに保存します。
+    BigQueryスキーマ: timestamp, session_id, status
     """
     log_table_id = (
         f"{st.secrets['bigquery']['project_id']}"
@@ -78,13 +79,13 @@ def log_login_to_bigquery(_bq_client, user_id, status):
             print(f"ログインログ ({status}) をBigQueryに保存しました。")
         else:
             # BigQueryエラーを詳細に出力
-            st.error(f"🚨 ログインログのBigQuery保存に失敗しました。BigQueryエラー: {errors}") # ★修正
+            st.error(f"🚨 ログインログのBigQuery保存に失敗しました。BigQueryエラー: {errors}") 
             print(f"BigQueryへのログインログ保存に失敗しました: {errors}")
             
     except Exception as e:
         # ログ失敗はアプリの停止を妨げないが警告
-        st.error(f"🚨 ログインログ記録の権限エラー: {e}") # ★修正
-        st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") # ★修正
+        st.error(f"🚨 ログインログ記録の権限エラー: {e}") 
+        st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") 
         print(f"ログ記録機能でエラーが発生しました: {e}")
 
 def check_credentials_bigquery(bq_client, user_id, password):
@@ -98,7 +99,7 @@ def check_credentials_bigquery(bq_client, user_id, password):
     )
     
     try:
-        # ★★★ 修正2: 認証クエリ実行前のインフォメーション表示 ★★★
+        # 認証クエリ実行前のインフォメーション表示
         st.info("認証クエリ実行中... (BigQueryへの接続とクエリ処理を待機中)")
         
         # SQLインジェクション対策としてパラメータ化クエリを使用
@@ -254,6 +255,7 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
 def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_categories, years, file_count, page_count):
     """
     検索ログをBigQueryの別テーブルに保存します。
+    BigQueryスキーマ: timestamp, session_id, keyword, ministry, category, sub_category, year, file_count, page_count
     """
     log_table_id = (
         f"{st.secrets['bigquery']['project_id']}"
@@ -267,10 +269,11 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
                 "session_id": st.session_state['user_id'], # ユーザーIDをセッションID代わりに使用
                 "keyword": keyword,
-                "ministries": ", ".join(ministries),
-                "categories": ", ".join(categories),
-                "sub_categories": ", ".join(sub_categories),
-                "years": ", ".join([str(y) for y in years]), # リストを文字列に変換
+                # ★★★ 修正: スキーマに合わせ、フィールド名を単数形に変更 (ministry, category, sub_category, year) ★★★
+                "ministry": ", ".join(ministries), 
+                "category": ", ".join(categories),
+                "sub_category": ", ".join(sub_categories),
+                "year": ", ".join([str(y) for y in years]), # リストを文字列に変換
                 "file_count": file_count,
                 "page_count": page_count
             }
@@ -280,12 +283,12 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
         if errors == []:
             print("検索ログをBigQueryに保存しました。")
         else:
-            st.error(f"🚨 検索ログのBigQuery保存に失敗しました。BigQueryエラー: {errors}") # ★修正
+            st.error(f"🚨 検索ログのBigQuery保存に失敗しました。BigQueryエラー: {errors}") 
             print(f"BigQueryへのログ保存に失敗しました: {errors}")
             
     except Exception as e:
-        st.error(f"🚨 検索ログ記録の権限エラー: {e}") # ★修正
-        st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") # ★修正
+        st.error(f"🚨 検索ログ記録の権限エラー: {e}") 
+        st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") 
         print(f"検索ログの保存に失敗しました: {e} (ログテーブル: {log_table_id})")
 
 
@@ -354,6 +357,7 @@ def main_app(bq_client):
                 st.success(f"{file_count}ファイル・{page_count}ページ ヒットしました")
                 
                 # 検索ログをBigQueryに記録 (ステップ5)
+                # ここに渡す引数は変更なし
                 log_search_to_bigquery(
                     bq_client, keyword, ministries, categories, 
                     sub_categories, [str(y) for y in years], file_count, page_count
