@@ -12,18 +12,39 @@ st.set_page_config(
 )
 
 # ----------------------------------------------------------------------
-# カラム名の設定（日本語表示名）
+# テーブル設定（各タブ用）
 # ----------------------------------------------------------------------
-COLUMN_NAMES = {
-    'file_id': 'ファイルID',
-    'title': '資料名',
-    'ministry': '省庁',
-    'fiscal_year_start': '年度',
-    'category': 'カテゴリ',
-    'sub_category': '資料形式',
-    'file_page': 'ページ',
-    'source_url': 'URL',
-    'content_text': '本文'
+TABLE_CONFIGS = {
+    "予算": {
+        "dataset": st.secrets["bigquery"]["budget_dataset"],
+        "table": st.secrets["bigquery"]["budget_table"],
+        "columns": {
+            'file_id': 'ファイルID',
+            'title': 'タイトル',
+            'ministry': '省庁',
+            'fiscal_year_start': '年度',
+            'category': 'カテゴリ',
+            'sub_category': '資料形式',
+            'file_page': 'ページ',
+            'source_url': 'URL',
+            'content_text': '本文'
+        }
+    },
+    "各種会議資料": {
+        "dataset": st.secrets["bigquery"]["meeting_dataset"],
+        "table": st.secrets["bigquery"]["meeting_table"],
+        "columns": {
+            'file_id': 'ファイルID',
+            'title': 'タイトル',
+            'ministry': '省庁',
+            'fiscal_year_start': '年度',
+            'category': 'カテゴリ',
+            'sub_category': '資料形式',
+            'file_page': 'ページ',
+            'source_url': 'URL',
+            'content_text': '本文'
+        }
+    }
 }
 
 # ----------------------------------------------------------------------
@@ -148,7 +169,7 @@ def show_login_form(bq_client):
 # ----------------------------------------------------------------------
 
 @st.cache_data(ttl=3600)
-def load_metadata(_bq_client):
+def load_metadata(_bq_client, dataset, table):
     """
     フィルタ用のメタデータをBigQueryから読み込みます。
     """
@@ -158,7 +179,7 @@ def load_metadata(_bq_client):
         category,
         sub_category,
         fiscal_year_start
-      FROM `{st.secrets["bigquery"]["project_id"]}.{st.secrets["bigquery"]["dataset"]}.{st.secrets["bigquery"]["table"]}`
+      FROM `{st.secrets["bigquery"]["project_id"]}.{dataset}.{table}`
       GROUP BY ministry, category, sub_category, fiscal_year_start
       ORDER BY ministry, category, sub_category, fiscal_year_start
     """
@@ -169,15 +190,18 @@ def load_metadata(_bq_client):
         st.error(f"メタデータの読み込みエラー: {e}")
         return pd.DataFrame()
 
-def run_search(_bq_client, keyword, ministries, categories, sub_categories, years):
+def run_search(_bq_client, dataset, table, column_names, keyword, ministries, categories, sub_categories, years):
     """
     検索クエリを実行します。
     """
+    # カラム名のリストを取得
+    db_columns = list(column_names.keys())
+    columns_str = ", ".join(db_columns)
+    
     base_query = f"""
         SELECT 
-            file_id, title, ministry, fiscal_year_start, category, 
-            sub_category, file_page, source_url, content_text
-        FROM `{st.secrets["bigquery"]["project_id"]}.{st.secrets["bigquery"]["dataset"]}.{st.secrets["bigquery"]["table"]}`
+            {columns_str}
+        FROM `{st.secrets["bigquery"]["project_id"]}.{dataset}.{table}`
     """
     
     where_conditions = []
@@ -216,13 +240,13 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
     try:
         df = _bq_client.query(final_query, job_config=job_config).to_dataframe()
         # カラム名を日本語に変換
-        df = df.rename(columns=COLUMN_NAMES)
+        df = df.rename(columns=column_names)
         return df
     except Exception as e:
         st.error(f"検索エラー: {e}")
         return pd.DataFrame()
 
-def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_categories, years, file_count, page_count):
+def log_search_to_bigquery(_bq_client, tab_name, keyword, ministries, categories, sub_categories, years, file_count, page_count):
     """
     検索ログをBigQueryに保存します。
     """
@@ -237,6 +261,7 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
             {
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
                 "sessionId": st.session_state['user_id'],
+                "tab_name": tab_name,
                 "keyword": keyword,
                 "filter_ministries": ", ".join(ministries), 
                 "filter_category": ", ".join(categories),
@@ -264,28 +289,35 @@ def main_app(bq_client):
     
     st.sidebar.markdown("---")
     
+    # 全テーブルのメタデータを統合して読み込み
     with st.spinner("フィルタを読み込み中..."):
-        meta_df = load_metadata(bq_client)
-    
-    if meta_df.empty:
-        st.sidebar.error("フィルタの読み込みに失敗しました。")
-        st.stop()
+        all_meta_dfs = []
+        for tab_name, tab_config in TABLE_CONFIGS.items():
+            meta_df = load_metadata(bq_client, tab_config["dataset"], tab_config["table"])
+            if not meta_df.empty:
+                all_meta_dfs.append(meta_df)
+        
+        if all_meta_dfs:
+            combined_meta_df = pd.concat(all_meta_dfs, ignore_index=True).drop_duplicates()
+        else:
+            st.sidebar.error("フィルタの読み込みに失敗しました。")
+            st.stop()
 
     ministries = st.sidebar.multiselect(
         "省庁:",
-        sorted(meta_df['ministry'].unique())
+        sorted(combined_meta_df['ministry'].unique())
     )
     categories = st.sidebar.multiselect(
         "カテゴリ:",
-        sorted(meta_df['category'].unique())
+        sorted(combined_meta_df['category'].unique())
     )
     sub_categories = st.sidebar.multiselect(
         "資料形式:",
-        sorted(meta_df['sub_category'].unique())
+        sorted(combined_meta_df['sub_category'].unique())
     )
     years = st.sidebar.multiselect(
         "年度:",
-        sorted(meta_df['fiscal_year_start'].unique(), reverse=True)
+        sorted(combined_meta_df['fiscal_year_start'].unique(), reverse=True)
     )
 
     st.sidebar.markdown("---")
@@ -305,41 +337,67 @@ def main_app(bq_client):
         st.session_state['user_id'] = ""
         st.rerun()
 
-    # メインコンテンツ (検索結果)
+    # メインコンテンツ (検索結果をタブで表示)
     st.markdown("---")
 
     if search_button:
         with st.spinner("🔄 検索中..."):
-            results_df = run_search(bq_client, keyword, ministries, categories, sub_categories, years)
+            # 各テーブルから検索結果を取得
+            all_results = {}
+            for tab_name, tab_config in TABLE_CONFIGS.items():
+                dataset = tab_config["dataset"]
+                table = tab_config["table"]
+                column_names = tab_config["columns"]
+                
+                results_df = run_search(
+                    bq_client, dataset, table, column_names,
+                    keyword, ministries, categories, sub_categories, years
+                )
+                all_results[tab_name] = {
+                    "df": results_df,
+                    "column_names": column_names
+                }
             
-            if not results_df.empty:
-                page_count = len(results_df)
-                # 日本語カラム名に変更後は 'ファイルID' を使用
-                file_count = results_df[COLUMN_NAMES['file_id']].nunique()
-                
-                st.success(f"{file_count}ファイル・{page_count}ページ ヒットしました")
-                
-                log_search_to_bigquery(
-                    bq_client, keyword, ministries, categories, 
-                    sub_categories, [str(y) for y in years], file_count, page_count
-                )
-                
-                # データフレームを縦長表示（高さ2000px）
-                # column_configでURLをハイパーリンク化
-                st.dataframe(
-                    results_df, 
-                    height=2000, 
-                    use_container_width=True,
-                    column_config={
-                        COLUMN_NAMES['source_url']: st.column_config.LinkColumn(
-                            COLUMN_NAMES['source_url'],
-                            display_text="📄リンク"
+            # タブで結果を表示
+            tabs = st.tabs(list(TABLE_CONFIGS.keys()))
+            
+            for i, (tab_name, tab) in enumerate(zip(TABLE_CONFIGS.keys(), tabs)):
+                with tab:
+                    results_df = all_results[tab_name]["df"]
+                    column_names = all_results[tab_name]["column_names"]
+                    
+                    if not results_df.empty:
+                        page_count = len(results_df)
+                        # 日本語カラム名を使用してfile_idを取得
+                        file_id_col = column_names.get('file_id', 'file_id')
+                        file_count = results_df[file_id_col].nunique()
+                        
+                        st.success(f"{file_count}ファイル・{page_count}ページ ヒットしました")
+                        
+                        log_search_to_bigquery(
+                            bq_client, tab_name, keyword, ministries, categories, 
+                            sub_categories, [str(y) for y in years], file_count, page_count
                         )
-                    }
-                )
-                
-            else:
-                st.info("該当する結果が見つかりませんでした。")
+                        
+                        # データフレームを縦長表示（高さ2000px）
+                        # column_configでURLをハイパーリンク化
+                        url_col = column_names.get('source_url')
+                        if url_col:
+                            st.dataframe(
+                                results_df, 
+                                height=2000, 
+                                use_container_width=True,
+                                column_config={
+                                    url_col: st.column_config.LinkColumn(
+                                        url_col,
+                                        display_text="📄リンク"
+                                    )
+                                }
+                            )
+                        else:
+                            st.dataframe(results_df, height=2000, use_container_width=True)
+                    else:
+                        st.info("該当する結果が見つかりませんでした。")
 
 # ----------------------------------------------------------------------
 # アプリケーションの実行

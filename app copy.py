@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from google.cloud import bigquery
 from google.oauth2 import service_account
-import json
 
 # ----------------------------------------------------------------------
 # ページ設定
@@ -13,41 +12,47 @@ st.set_page_config(
 )
 
 # ----------------------------------------------------------------------
+# カラム名の設定（日本語表示名）
+# ----------------------------------------------------------------------
+COLUMN_NAMES = {
+    'file_id': 'ファイルID',
+    'title': '資料名',
+    'ministry': '省庁',
+    'fiscal_year_start': '年度',
+    'category': 'カテゴリ',
+    'sub_category': '資料形式',
+    'file_page': 'ページ',
+    'source_url': 'URL',
+    'content_text': '本文'
+}
+
+# ----------------------------------------------------------------------
 # BigQuery 接続
-# (認証とデータ取得の両方で使用)
 # ----------------------------------------------------------------------
 
-@st.cache_resource # クライアントはリソースとしてキャッシュ
+@st.cache_resource
 def get_bigquery_client():
     """
     StreamlitのsecretsからGCPサービスアカウントキーを取得し、
     BigQueryクライアントを初期化します。
     """
     try:
-        # st.secretsがTOMLテーブルとして直接辞書を返すため、json.loads()は不要
         creds_json = st.secrets["gcp_service_account"] 
         project_id = st.secrets['bigquery']['project_id']
         
         creds = service_account.Credentials.from_service_account_info(creds_json)
-        # BigQueryクライアントの初期化時にプロジェクトIDを明示的に指定
         client = bigquery.Client(credentials=creds, project=project_id)
-
-        # ★★★ クライアント初期化後、実際にプロジェクトのリストを取得して接続をテストする ★★★
-        # ジョブを投入する権限 (bigquery.jobUser) がないとここで失敗する
-        client.list_projects(max_results=1) 
+        client.list_projects(max_results=1)
         
         return client
     except Exception as e:
-        # エラーメッセージを分かりやすく
-        st.error(f"🚨 BigQuery初期接続または権限エラーが発生しました: {e}")
-        st.caption("詳細: サービスアカウントのJSONキー、`secrets.toml` の `project_id`、および `BigQuery ジョブユーザー` 権限を確認してください。")
+        st.error(f"BigQuery接続エラー: {e}")
         st.stop()
 
 # ----------------------------------------------------------------------
 # 認証とセッション管理
 # ----------------------------------------------------------------------
 
-# セッションステートの初期化
 if 'authenticated' not in st.session_state:
     st.session_state['authenticated'] = False
 if 'user_id' not in st.session_state:
@@ -55,8 +60,7 @@ if 'user_id' not in st.session_state:
 
 def log_login_to_bigquery(_bq_client, input_user_id, input_password, login_result, current_session_id):
     """
-    ログイン試行ログをBigQueryのconfigデータセットに保存します。
-    BigQueryスキーマ (ご要望に基づく): timestamp, id, password, result, sessionId
+    ログイン試行ログをBigQueryに保存します。
     """
     log_table_id = (
         f"{st.secrets['bigquery']['project_id']}"
@@ -67,32 +71,17 @@ def log_login_to_bigquery(_bq_client, input_user_id, input_password, login_resul
     try:
         rows_to_insert = [
             {
-                # ログインログのスキーマ項目: timestamp, id, password, result, sessionId
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
-                "id": input_user_id,         # ご要望通り 'id'
-                "password": input_password,  # ご要望通り 'password'
-                "result": login_result,      # 'success' or 'failed'
-                # ★修正: 'session_id' から 'sessionId' に変更
+                "id": input_user_id,
+                "password": input_password,
+                "result": login_result,
                 "sessionId": current_session_id 
             }
         ]
         
-        # INSERT権限 (BigQuery データ編集者) がないとここで失敗する
-        errors = _bq_client.insert_rows_json(log_table_id, rows_to_insert)
-        if errors == []:
-            # 成功時は見えないバックエンドでログを出力
-            print(f"✅ ログインログ ({login_result}) をBigQueryに保存しました。")
-        else:
-            # BigQueryエラーを詳細に出力し、デバッグを容易にする
-            st.error(f"🚨 ログインログのBigQuery保存に失敗しました。テーブルID: {log_table_id}") 
-            st.code(f"BigQueryエラー: {errors}") # エラーレスポンスをコードブロックで表示
-            print(f"❌ BigQueryへのログインログ保存に失敗しました: {errors}")
-            
+        _bq_client.insert_rows_json(log_table_id, rows_to_insert)
     except Exception as e:
-        # ログ失敗はアプリの停止を妨げないが警告
-        st.error(f"🚨 ログインログ記録の権限エラー: {e}") 
-        st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") 
-        print(f"❌ ログ記録機能でエラーが発生しました: {e}")
+        st.warning(f"ログ記録エラー: {e}")
 
 def check_credentials_bigquery(bq_client, user_id, password):
     """
@@ -100,15 +89,11 @@ def check_credentials_bigquery(bq_client, user_id, password):
     """
     auth_table_id_str = (
         f"`{st.secrets['bigquery']['project_id']}"
-        f".{st.secrets['bigquery']['config_dataset']}" # 認証用データセット
+        f".{st.secrets['bigquery']['config_dataset']}"
         f".{st.secrets['bigquery']['auth_table']}`"
     )
     
     try:
-        # 認証クエリ実行前のインフォメーション表示
-        st.info("認証クエリ実行中... (BigQueryへの接続とクエリ処理を待機中)")
-        
-        # SQLインジェクション対策としてパラメータ化クエリを使用
         query = f"""
             SELECT id 
             FROM {auth_table_id_str}
@@ -123,17 +108,13 @@ def check_credentials_bigquery(bq_client, user_id, password):
             ]
         )
         
-        # クエリ実行 (configデータセットへのSELECT権限が必要です)
         query_job = bq_client.query(query, job_config=job_config)
-        results = query_job.to_dataframe() # 結果を取得
+        results = query_job.to_dataframe()
         
-        # 該当するユーザーがいれば認証成功
         return not results.empty
         
     except Exception as e:
-        # 認証クエリ実行エラーは、権限不足またはテーブル名誤りの可能性が高い
-        st.error(f"認証クエリ実行エラーが発生しました: {e}")
-        st.caption(f"認証を試みたテーブル: {auth_table_id_str}")
+        st.error(f"認証エラー: {e}")
         return False
 
 def show_login_form(bq_client):
@@ -148,43 +129,29 @@ def show_login_form(bq_client):
         submitted = st.form_submit_button("ログイン")
 
         if submitted:
-            # 前回のエラーメッセージをクリア
-            if 'error_message' in st.session_state:
-                del st.session_state['error_message']
-
             if not user_id or not password:
                 st.error("ユーザーIDとパスワードを入力してください。")
                 return
 
-            # スピナーで待機状態を示す
             with st.spinner("認証中..."):
-                # BigQueryで認証実行
                 if check_credentials_bigquery(bq_client, user_id, password):
                     st.session_state['authenticated'] = True
                     st.session_state['user_id'] = user_id
-                    
-                    # ログイン成功ログをBigQueryに記録 (result='success', session_id=user_id)
                     log_login_to_bigquery(bq_client, user_id, password, 'success', user_id)
-                    
-                    st.rerun() # 認証成功したらページを再読み込み
+                    st.rerun()
                 else:
-                    # 認証失敗ログをBigQueryに記録 (result='failed', session_id=user_id)
                     log_login_to_bigquery(bq_client, user_id, password, 'failed', user_id)
-                    
-                    # check_credentials_bigquery内でエラーが出ていなければ、認証情報不一致のエラーを出す
-                    if '認証クエリ実行エラーが発生しました' not in st.session_state.get('error_message', ''):
-                        st.error("ユーザーIDまたはパスワードが間違っています。")
+                    st.error("ユーザーIDまたはパスワードが間違っています。")
 
 # ----------------------------------------------------------------------
 # メインアプリケーション
 # ----------------------------------------------------------------------
 
-@st.cache_data(ttl=3600) # 1時間キャッシュ
+@st.cache_data(ttl=3600)
 def load_metadata(_bq_client):
     """
     フィルタ用のメタデータをBigQueryから読み込みます。
     """
-    # データ検索用のデータセットを参照
     query = f"""
       SELECT 
         ministry,
@@ -199,15 +166,13 @@ def load_metadata(_bq_client):
         df = _bq_client.query(query).to_dataframe()
         return df
     except Exception as e:
-        st.error(f"メタデータの読み込みに失敗しました。データテーブルの権限とテーブル名を確認してください: {e}")
+        st.error(f"メタデータの読み込みエラー: {e}")
         return pd.DataFrame()
 
 def run_search(_bq_client, keyword, ministries, categories, sub_categories, years):
-    # ... (検索ロジックは変更なし)
     """
     検索クエリを実行します。
     """
-    # データ検索用のデータセットを参照
     base_query = f"""
         SELECT 
             file_id, title, ministry, fiscal_year_start, category, 
@@ -216,9 +181,8 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
     """
     
     where_conditions = []
-    query_params = [] # SQLインジェクション対策
+    query_params = []
 
-    # PythonならWHERE句の構築が簡単です
     if ministries:
         where_conditions.append("ministry IN UNNEST(@ministries)")
         query_params.append(bigquery.ArrayQueryParameter("ministries", "STRING", ministries))
@@ -232,7 +196,6 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
         query_params.append(bigquery.ArrayQueryParameter("sub_categories", "STRING", sub_categories))
 
     if years:
-        # 年度はINT64として扱う
         int_years = [int(y) for y in years]
         where_conditions.append("fiscal_year_start IN UNNEST(@years)")
         query_params.append(bigquery.ArrayQueryParameter("years", "INT64", int_years))
@@ -241,19 +204,19 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
         where_conditions.append("(LOWER(title) LIKE @keyword OR LOWER(content_text) LIKE @keyword)")
         query_params.append(bigquery.ScalarQueryParameter("keyword", "STRING", f"%{keyword.lower()}%"))
 
-    # クエリを結合
     if where_conditions:
         final_query = base_query + " WHERE " + " AND ".join(where_conditions)
     else:
         final_query = base_query
         
-    final_query += " ORDER BY ministry, category, fiscal_year_start LIMIT 1000" # 念のためリミット
+    final_query += " ORDER BY ministry, category, fiscal_year_start"
 
-    # BigQueryジョブの設定
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
     
     try:
         df = _bq_client.query(final_query, job_config=job_config).to_dataframe()
+        # カラム名を日本語に変換
+        df = df.rename(columns=COLUMN_NAMES)
         return df
     except Exception as e:
         st.error(f"検索エラー: {e}")
@@ -261,49 +224,32 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
 
 def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_categories, years, file_count, page_count):
     """
-    検索ログをBigQueryの別テーブルに保存します。
-    BigQueryスキーマ (GASのスプレッドシートログを参照): timestamp, session_id, keyword, filter_ministries, filter_categories, filter_sub_categories, filter_years, file_count, page_count
+    検索ログをBigQueryに保存します。
     """
     log_table_id = (
         f"{st.secrets['bigquery']['project_id']}"
-        f".{st.secrets['bigquery']['config_dataset']}" # ログ・設定用データセット
-        f".{st.secrets['bigquery']['log_search_table']}" # secrets.tomlで指定
+        f".{st.secrets['bigquery']['config_dataset']}"
+        f".{st.secrets['bigquery']['log_search_table']}"
     )
     
     try:
         rows_to_insert = [
             {
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
-                # session_id のカラム名については log_login と同じく 'sessionId' にするのが自然ですが、
-                # log_search のスキーマは 'session_id' で統一されているため、ここでは 'session_id' を維持します。
-                # ただし、今回は log_login のスキーマに合わせるようご要望があったため、こちらも 'sessionId' に変更します。
-                "sessionId": st.session_state['user_id'], # ユーザーIDをセッションID代わりに使用
+                "sessionId": st.session_state['user_id'],
                 "keyword": keyword,
-                # ★修正: スキーマに合わせ、filter_ プレフィックスを付けたカラム名を使用
                 "filter_ministries": ", ".join(ministries), 
                 "filter_category": ", ".join(categories),
                 "filter_subcategory": ", ".join(sub_categories),
-                "filter_year": ", ".join([str(y) for y in years]), # リストを文字列に変換
+                "filter_year": ", ".join([str(y) for y in years]),
                 "file_count": file_count,
                 "page_count": page_count
             }
         ]
         
-        errors = _bq_client.insert_rows_json(log_table_id, rows_to_insert)
-        if errors == []:
-            # 成功時は見えないバックエンドでログを出力
-            print("✅ 検索ログをBigQueryに保存しました。")
-        else:
-            # BigQueryエラーを詳細に出力し、デバッグを容易にする
-            st.error(f"🚨 検索ログのBigQuery保存に失敗しました。テーブルID: {log_table_id}") 
-            st.code(f"BigQueryエラー: {errors}") # エラーレスポンスをコードブロックで表示
-            print(f"❌ BigQueryへのログ保存に失敗しました: {errors}")
-            
+        _bq_client.insert_rows_json(log_table_id, rows_to_insert)
     except Exception as e:
-        st.error(f"🚨 検索ログ記録の権限エラー: {e}") 
-        st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") 
-        print(f"❌ 検索ログの保存に失敗しました: {e} (ログテーブル: {log_table_id})")
-
+        st.warning(f"検索ログ記録エラー: {e}")
 
 def main_app(bq_client):
     """
@@ -311,10 +257,12 @@ def main_app(bq_client):
     """
     st.title("省庁資料検索ツール（Streamlit版）")
     
-    # -----------------
-    # 1. サイドバー (フィルタ)
-    # -----------------
+    # サイドバー (フィルタ)
     st.sidebar.header("🔽 条件絞り込み")
+    
+    keyword = st.sidebar.text_input("キーワード", placeholder="キーワードを入力")
+    
+    st.sidebar.markdown("---")
     
     with st.spinner("フィルタを読み込み中..."):
         meta_df = load_metadata(bq_client)
@@ -323,7 +271,6 @@ def main_app(bq_client):
         st.sidebar.error("フィルタの読み込みに失敗しました。")
         st.stop()
 
-    # GASの 'renderCheckboxes' を st.multiselect で再現
     ministries = st.sidebar.multiselect(
         "省庁:",
         sorted(meta_df['ministry'].unique())
@@ -342,42 +289,54 @@ def main_app(bq_client):
     )
 
     st.sidebar.markdown("---")
-    if st.sidebar.button("フィルタをリセット"):
-        # Streamlitではウィジェットをクリアするより、ページをリランするのが簡単
+    
+    # 検索ボタン（赤色）
+    search_button = st.sidebar.button("🔍 検索", type="primary", use_container_width=True)
+    
+    st.sidebar.markdown("")
+    
+    if st.sidebar.button("フィルタをリセット", use_container_width=True):
+        st.rerun()
+    
+    st.sidebar.markdown("")
+    
+    if st.sidebar.button("ログアウト", use_container_width=True):
+        st.session_state['authenticated'] = False
+        st.session_state['user_id'] = ""
         st.rerun()
 
-    # -----------------
-    # 2. メインコンテンツ (検索と結果)
-    # -----------------
-    
-    # キーワード入力
-    keyword = st.text_input("キーワード", placeholder="キーワードを入力")
-    
-    # 検索ボタン
-    search_button = st.button("検索")
-    
+    # メインコンテンツ (検索結果)
     st.markdown("---")
 
     if search_button:
         with st.spinner("🔄 検索中..."):
-            # 検索実行
             results_df = run_search(bq_client, keyword, ministries, categories, sub_categories, years)
             
             if not results_df.empty:
                 page_count = len(results_df)
-                file_count = results_df['file_id'].nunique()
+                # 日本語カラム名に変更後は 'ファイルID' を使用
+                file_count = results_df[COLUMN_NAMES['file_id']].nunique()
                 
                 st.success(f"{file_count}ファイル・{page_count}ページ ヒットしました")
                 
-                # 検索ログをBigQueryに記録 (ステップ5)
-                # ここに渡す引数は変更なし
                 log_search_to_bigquery(
                     bq_client, keyword, ministries, categories, 
                     sub_categories, [str(y) for y in years], file_count, page_count
                 )
                 
-                # 結果をデータフレームとして表示 (ソートやフィルタリングが標準装備)
-                st.dataframe(results_df)
+                # データフレームを縦長表示（高さ2000px）
+                # column_configでURLをハイパーリンク化
+                st.dataframe(
+                    results_df, 
+                    height=2000, 
+                    use_container_width=True,
+                    column_config={
+                        COLUMN_NAMES['source_url']: st.column_config.LinkColumn(
+                            COLUMN_NAMES['source_url'],
+                            display_text="📄リンク"
+                        )
+                    }
+                )
                 
             else:
                 st.info("該当する結果が見つかりませんでした。")
@@ -386,10 +345,8 @@ def main_app(bq_client):
 # アプリケーションの実行
 # ----------------------------------------------------------------------
 
-# まずBQクライアントを初期化
 bq_client = get_bigquery_client()
 
-# セッションステートをチェックして、認証済みか判断
 if not st.session_state['authenticated']:
     show_login_form(bq_client)
 else:
