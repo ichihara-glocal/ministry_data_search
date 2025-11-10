@@ -325,7 +325,18 @@ def main_app(bq_client):
                 )
                 
                 # データフレームを縦長表示（高さ2000px）
-                st.dataframe(results_df, height=2000, use_container_width=True)
+                # column_configでURLをハイパーリンク化
+                st.dataframe(
+                    results_df, 
+                    height=2000, 
+                    use_container_width=True,
+                    column_config={
+                        COLUMN_NAMES['source_url']: st.column_config.LinkColumn(
+                            COLUMN_NAMES['source_url'],
+                            display_text="📄リンク"
+                        )
+                    }
+                )
                 
             else:
                 st.info("該当する結果が見つかりませんでした。")
