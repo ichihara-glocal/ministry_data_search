@@ -53,10 +53,10 @@ if 'authenticated' not in st.session_state:
 if 'user_id' not in st.session_state:
     st.session_state['user_id'] = ""
 
-def log_login_to_bigquery(_bq_client, user_id, status):
+def log_login_to_bigquery(_bq_client, input_user_id, input_password, login_result, current_session_id):
     """
     ログイン試行ログをBigQueryのconfigデータセットに保存します。
-    BigQueryスキーマ: timestamp, session_id, status
+    BigQueryスキーマ (ご要望に基づく): timestamp, user_id, password, result, session_id
     """
     log_table_id = (
         f"{st.secrets['bigquery']['project_id']}"
@@ -67,26 +67,31 @@ def log_login_to_bigquery(_bq_client, user_id, status):
     try:
         rows_to_insert = [
             {
+                # ご要望に基づくスキーマ項目
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
-                "session_id": user_id, # ここでは、試行したユーザーIDをセッション識別子の代わりとして記録
-                "status": status # 'success' or 'failed'
+                "user_id": input_user_id, 
+                "password": input_password, # ★機密情報注意★
+                "result": login_result, # 'success' or 'failed'
+                "session_id": current_session_id # 認証成功後のユーザーIDまたは試行ID
             }
         ]
         
         # INSERT権限 (BigQuery データ編集者) がないとここで失敗する
         errors = _bq_client.insert_rows_json(log_table_id, rows_to_insert)
         if errors == []:
-            print(f"ログインログ ({status}) をBigQueryに保存しました。")
+            # 成功時は見えないバックエンドでログを出力
+            print(f"✅ ログインログ ({login_result}) をBigQueryに保存しました。")
         else:
-            # BigQueryエラーを詳細に出力
-            st.error(f"🚨 ログインログのBigQuery保存に失敗しました。BigQueryエラー: {errors}") 
-            print(f"BigQueryへのログインログ保存に失敗しました: {errors}")
+            # BigQueryエラーを詳細に出力し、デバッグを容易にする
+            st.error(f"🚨 ログインログのBigQuery保存に失敗しました。テーブルID: {log_table_id}") 
+            st.code(f"BigQueryエラー: {errors}") # エラーレスポンスをコードブロックで表示
+            print(f"❌ BigQueryへのログインログ保存に失敗しました: {errors}")
             
     except Exception as e:
         # ログ失敗はアプリの停止を妨げないが警告
         st.error(f"🚨 ログインログ記録の権限エラー: {e}") 
         st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") 
-        print(f"ログ記録機能でエラーが発生しました: {e}")
+        print(f"❌ ログ記録機能でエラーが発生しました: {e}")
 
 def check_credentials_bigquery(bq_client, user_id, password):
     """
@@ -157,13 +162,14 @@ def show_login_form(bq_client):
                     st.session_state['authenticated'] = True
                     st.session_state['user_id'] = user_id
                     
-                    # ログイン成功ログをBigQueryに記録
-                    log_login_to_bigquery(bq_client, user_id, 'success')
+                    # ログイン成功ログをBigQueryに記録 (result='success', session_id=user_id)
+                    log_login_to_bigquery(bq_client, user_id, password, 'success', user_id)
                     
                     st.rerun() # 認証成功したらページを再読み込み
                 else:
-                    # 認証失敗ログをBigQueryに記録 (check_credentials_bigquery内でエラーがst.errorで出た場合もここに来る)
-                    log_login_to_bigquery(bq_client, user_id, 'failed')
+                    # 認証失敗ログをBigQueryに記録 (result='failed', session_id=user_id)
+                    log_login_to_bigquery(bq_client, user_id, password, 'failed', user_id)
+                    
                     # check_credentials_bigquery内でエラーが出ていなければ、認証情報不一致のエラーを出す
                     if '認証クエリ実行エラーが発生しました' not in st.session_state.get('error_message', ''):
                         st.error("ユーザーIDまたはパスワードが間違っています。")
@@ -267,12 +273,13 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
         rows_to_insert = [
             {
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
-                "sessionId": st.session_state['user_id'], # ユーザーIDをセッションID代わりに使用
+                "session_id": st.session_state['user_id'], # ユーザーIDをセッションID代わりに使用
                 "keyword": keyword,
-                "filter_ministries": ", ".join(ministries), 
-                "filter_category": ", ".join(categories),
-                "filter_subcategory": ", ".join(sub_categories),
-                "filter_year": ", ".join([str(y) for y in years]), # リストを文字列に変換
+                # スキーマに合わせ、フィールド名を単数形に変更 (ministry, category, sub_category, year) 
+                "ministry": ", ".join(ministries), 
+                "category": ", ".join(categories),
+                "sub_category": ", ".join(sub_categories),
+                "year": ", ".join([str(y) for y in years]), # リストを文字列に変換
                 "file_count": file_count,
                 "page_count": page_count
             }
@@ -280,15 +287,18 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
         
         errors = _bq_client.insert_rows_json(log_table_id, rows_to_insert)
         if errors == []:
-            print("検索ログをBigQueryに保存しました。")
+            # 成功時は見えないバックエンドでログを出力
+            print("✅ 検索ログをBigQueryに保存しました。")
         else:
-            st.error(f"🚨 検索ログのBigQuery保存に失敗しました。BigQueryエラー: {errors}") 
-            print(f"BigQueryへのログ保存に失敗しました: {errors}")
+            # BigQueryエラーを詳細に出力し、デバッグを容易にする
+            st.error(f"🚨 検索ログのBigQuery保存に失敗しました。テーブルID: {log_table_id}") 
+            st.code(f"BigQueryエラー: {errors}") # エラーレスポンスをコードブロックで表示
+            print(f"❌ BigQueryへのログ保存に失敗しました: {errors}")
             
     except Exception as e:
         st.error(f"🚨 検索ログ記録の権限エラー: {e}") 
         st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") 
-        print(f"検索ログの保存に失敗しました: {e} (ログテーブル: {log_table_id})")
+        print(f"❌ 検索ログの保存に失敗しました: {e} (ログテーブル: {log_table_id})")
 
 
 def main_app(bq_client):
