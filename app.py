@@ -286,9 +286,7 @@ def main_app(bq_client):
     st.sidebar.header("🔽 条件絞り込み")
     
     keyword = st.sidebar.text_input("キーワード", placeholder="キーワードを入力")
-    
-    st.sidebar.markdown("---")
-    
+        
     # 全テーブルのメタデータを統合して読み込み
     with st.spinner("フィルタを読み込み中..."):
         all_meta_dfs = []
