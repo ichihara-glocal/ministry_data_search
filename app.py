@@ -57,13 +57,13 @@ def log_login_to_bigquery(_bq_client, user_id, status):
     """
     ログイン試行ログをBigQueryのconfigデータセットに保存します。
     """
+    log_table_id = (
+        f"{st.secrets['bigquery']['project_id']}"
+        f".{st.secrets['bigquery']['config_dataset']}"
+        f".{st.secrets['bigquery']['log_login_table']}"
+    )
+    
     try:
-        log_table_id = (
-            f"{st.secrets['bigquery']['project_id']}"
-            f".{st.secrets['bigquery']['config_dataset']}"
-            f".{st.secrets['bigquery']['log_login_table']}"
-        )
-        
         rows_to_insert = [
             {
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
@@ -78,11 +78,14 @@ def log_login_to_bigquery(_bq_client, user_id, status):
             print(f"ログインログ ({status}) をBigQueryに保存しました。")
         else:
             # BigQueryエラーを詳細に出力
+            st.error(f"🚨 ログインログのBigQuery保存に失敗しました。BigQueryエラー: {errors}") # ★修正
             print(f"BigQueryへのログインログ保存に失敗しました: {errors}")
             
     except Exception as e:
         # ログ失敗はアプリの停止を妨げないが警告
-        st.warning(f"ログ記録機能でエラーが発生しました: {e}")
+        st.error(f"🚨 ログインログ記録の権限エラー: {e}") # ★修正
+        st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") # ★修正
+        print(f"ログ記録機能でエラーが発生しました: {e}")
 
 def check_credentials_bigquery(bq_client, user_id, password):
     """
@@ -249,18 +252,16 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
         return pd.DataFrame()
 
 def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_categories, years, file_count, page_count):
-    # ... (検索ログのロジックは変更なし)
     """
     検索ログをBigQueryの別テーブルに保存します。
     """
+    log_table_id = (
+        f"{st.secrets['bigquery']['project_id']}"
+        f".{st.secrets['bigquery']['config_dataset']}" # ログ・設定用データセット
+        f".{st.secrets['bigquery']['log_search_table']}" # secrets.tomlで指定
+    )
+    
     try:
-        # ログ用のデータセットとテーブル情報をsecretsから取得
-        log_table_id = (
-            f"{st.secrets['bigquery']['project_id']}"
-            f".{st.secrets['bigquery']['config_dataset']}" # ログ・設定用データセット
-            f".{st.secrets['bigquery']['log_search_table']}" # secrets.tomlで指定
-        )
-        
         rows_to_insert = [
             {
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
@@ -269,7 +270,7 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
                 "ministries": ", ".join(ministries),
                 "categories": ", ".join(categories),
                 "sub_categories": ", ".join(sub_categories),
-                "years": ", ".join(years),
+                "years": ", ".join([str(y) for y in years]), # リストを文字列に変換
                 "file_count": file_count,
                 "page_count": page_count
             }
@@ -279,10 +280,13 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
         if errors == []:
             print("検索ログをBigQueryに保存しました。")
         else:
+            st.error(f"🚨 検索ログのBigQuery保存に失敗しました。BigQueryエラー: {errors}") # ★修正
             print(f"BigQueryへのログ保存に失敗しました: {errors}")
             
     except Exception as e:
-        st.warning(f"検索ログの保存に失敗しました: {e} (ログテーブル: {log_table_id})")
+        st.error(f"🚨 検索ログ記録の権限エラー: {e}") # ★修正
+        st.caption(f"詳細: サービスアカウントに `{st.secrets['bigquery']['config_dataset']}` データセットへの `BigQuery データ編集者` 権限が必要です。") # ★修正
+        print(f"検索ログの保存に失敗しました: {e} (ログテーブル: {log_table_id})")
 
 
 def main_app(bq_client):
