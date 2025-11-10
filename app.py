@@ -281,9 +281,9 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
                 "keyword": keyword,
                 # ★修正: スキーマに合わせ、filter_ プレフィックスを付けたカラム名を使用
                 "filter_ministries": ", ".join(ministries), 
-                "filter_categories": ", ".join(categories),
-                "filter_sub_categories": ", ".join(sub_categories),
-                "filter_years": ", ".join([str(y) for y in years]), # リストを文字列に変換
+                "filter_category": ", ".join(categories),
+                "filter_sub_category": ", ".join(sub_categories),
+                "filter_year": ", ".join([str(y) for y in years]), # リストを文字列に変換
                 "file_count": file_count,
                 "page_count": page_count
             }
