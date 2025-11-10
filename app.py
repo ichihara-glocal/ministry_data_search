@@ -24,15 +24,16 @@ def get_bigquery_client():
     BigQueryクライアントを初期化します。
     """
     try:
-        # ★★★ 修正: st.secretsがTOMLテーブルとして直接辞書を返すため、json.loads()は不要 ★★★
+        # st.secretsがTOMLテーブルとして直接辞書を返すため、json.loads()は不要
         creds_json = st.secrets["gcp_service_account"] 
         
         creds = service_account.Credentials.from_service_account_info(creds_json)
-        client = bigquery.Client(credentials=creds, project=creds.project_id)
+        # BigQueryクライアントの初期化時にプロジェクトIDを明示的に指定
+        client = bigquery.Client(credentials=creds, project=st.secrets['bigquery']['project_id'])
         return client
     except Exception as e:
         # エラーメッセージを分かりやすく
-        st.error(f"BigQueryクライアントの初期化に失敗しました: {e}")
+        st.error(f"🚨 BigQueryクライアントの初期化に失敗しました。secrets.tomlの設定を確認してください: {e}")
         st.stop()
 
 # ----------------------------------------------------------------------
@@ -50,7 +51,6 @@ def log_login_to_bigquery(_bq_client, user_id, status):
     ログイン試行ログをBigQueryのconfigデータセットに保存します。
     """
     try:
-        # ログテーブルのIDをsecretsから取得 (例: log_login)
         log_table_id = (
             f"{st.secrets['bigquery']['project_id']}"
             f".{st.secrets['bigquery']['config_dataset']}"
@@ -60,7 +60,7 @@ def log_login_to_bigquery(_bq_client, user_id, status):
         rows_to_insert = [
             {
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
-                "session_id": user_id, # 試行ユーザーIDを記録
+                "session_id": user_id, # ここでは、試行したユーザーIDをセッション識別子の代わりとして記録
                 "status": status # 'success' or 'failed'
             }
         ]
@@ -69,22 +69,18 @@ def log_login_to_bigquery(_bq_client, user_id, status):
         if errors == []:
             print(f"ログインログ ({status}) をBigQueryに保存しました。")
         else:
+            # BigQueryエラーを詳細に出力
             print(f"BigQueryへのログインログ保存に失敗しました: {errors}")
             
     except Exception as e:
-        # ログ失敗はアプリの停止を妨げない
-        st.warning(f"ログインログの保存に失敗しました: {e} (テーブル: {log_table_id})")
+        # ログ失敗はアプリの停止を妨げないが警告
+        st.warning(f"ログ記録機能でエラーが発生しました: {e}")
 
 def check_credentials_bigquery(bq_client, user_id, password):
     """
     BigQueryの認証テーブルをチェックします。
-    
-    注意: このサンプルでは平文のパスワードを比較しています。
-    本番環境では、セキュリティ向上のため、BigQueryにハッシュ化されたパスワードを保存し、
-    Pythonの 'bcrypt' ライブラリなどでハッシュを比較する方法を強く推奨します。
     """
     try:
-        # secretsから認証用データセットとテーブル情報を取得
         auth_table_id = (
             f"`{st.secrets['bigquery']['project_id']}"
             f".{st.secrets['bigquery']['config_dataset']}" # 認証用データセット
@@ -92,6 +88,7 @@ def check_credentials_bigquery(bq_client, user_id, password):
         )
         
         # SQLインジェクション対策としてパラメータ化クエリを使用
+        # configデータセットへのSELECT権限が必要です
         query = f"""
             SELECT id 
             FROM {auth_table_id}
@@ -114,7 +111,9 @@ def check_credentials_bigquery(bq_client, user_id, password):
         return not results.empty
         
     except Exception as e:
-        st.error(f"認証クエリ実行エラー: {e}")
+        # 認証クエリ実行エラーは、認証失敗として扱う
+        print(f"認証クエリ実行エラー: {e}")
+        st.error("認証テーブルへのアクセス中にエラーが発生しました。権限とテーブル名を確認してください。")
         return False
 
 def show_login_form(bq_client):
@@ -122,6 +121,9 @@ def show_login_form(bq_client):
     ログインフォームを表示します。
     """
     st.title("省庁資料検索ツール（PoC版） - ログイン")
+    # ログインIDとPWのテーブル構成を表示 (デバッグ用)
+    st.caption(f"認証テーブル: `{st.secrets['bigquery']['project_id']}.{st.secrets['bigquery']['config_dataset']}.{st.secrets['bigquery']['auth_table']}`")
+    
     with st.form("login_form"):
         user_id = st.text_input("ユーザーID")
         password = st.text_input("パスワード", type="password")
@@ -139,16 +141,17 @@ def show_login_form(bq_client):
                         st.session_state['authenticated'] = True
                         st.session_state['user_id'] = user_id
                         
-                        # ログイン成功ログをBigQueryに記録 (追加)
+                        # ログイン成功ログをBigQueryに記録
                         log_login_to_bigquery(bq_client, user_id, 'success')
                         
                         st.rerun() # 認証成功したらページを再読み込み
                     else:
-                        # ログイン失敗ログをBigQueryに記録 (追加)
+                        # ログイン失敗ログをBigQueryに記録
                         log_login_to_bigquery(bq_client, user_id, 'failed')
                         st.error("ユーザーIDまたはパスワードが間違っています。")
                 except Exception as e:
-                    st.error(f"ログイン処理中にエラーが発生しました: {e}")
+                    # 予期せぬエラーが発生した場合
+                    st.error(f"ログイン処理中に予期せぬエラーが発生しました: {e}")
 
 # ----------------------------------------------------------------------
 # メインアプリケーション
@@ -158,7 +161,6 @@ def show_login_form(bq_client):
 def load_metadata(_bq_client):
     """
     フィルタ用のメタデータをBigQueryから読み込みます。
-    GASの 'getMetadataSummary' のStreamlit版です。
     """
     # データ検索用のデータセットを参照
     query = f"""
@@ -175,13 +177,12 @@ def load_metadata(_bq_client):
         df = _bq_client.query(query).to_dataframe()
         return df
     except Exception as e:
-        st.error(f"メタデータの読み込みに失敗しました: {e}")
+        st.error(f"メタデータの読み込みに失敗しました。データテーブルの権限とテーブル名を確認してください: {e}")
         return pd.DataFrame()
 
 def run_search(_bq_client, keyword, ministries, categories, sub_categories, years):
     """
     検索クエリを実行します。
-    GASの 'getSearchResults' と 'buildWhereClause' のStreamlit版です。
     """
     # データ検索用のデータセットを参照
     base_query = f"""
@@ -238,7 +239,6 @@ def run_search(_bq_client, keyword, ministries, categories, sub_categories, year
 def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_categories, years, file_count, page_count):
     """
     検索ログをBigQueryの別テーブルに保存します。
-    GASの 'logSearchToSheet' のStreamlit版（BigQuery移行版）です。
     """
     try:
         # ログ用のデータセットとテーブル情報をsecretsから取得
@@ -251,7 +251,7 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
         rows_to_insert = [
             {
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
-                "session_id": st.session_state['user_id'], # 簡易的にuser_idをセッションID代わりに使用
+                "session_id": st.session_state['user_id'], # ユーザーIDをセッションID代わりに使用
                 "keyword": keyword,
                 "ministries": ", ".join(ministries),
                 "categories": ", ".join(categories),
