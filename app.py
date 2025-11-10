@@ -267,7 +267,7 @@ def log_search_to_bigquery(_bq_client, keyword, ministries, categories, sub_cate
         rows_to_insert = [
             {
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
-                "session_id": st.session_state['user_id'], # ユーザーIDをセッションID代わりに使用
+                "sessionId": st.session_state['user_id'], # ユーザーIDをセッションID代わりに使用
                 "keyword": keyword,
                 "filter_ministries": ", ".join(ministries), 
                 "filter_category": ", ".join(categories),
