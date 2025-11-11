@@ -334,7 +334,7 @@ def main_app(bq_client):
     tree_data = load_ministry_tree()
     
     with st.sidebar:
-        st.markdown("### 本局/外局:")
+        st.markdown("### 省庁:")
         if tree_data:
             tree_result = st_ant_tree(
                 treeData=tree_data,
