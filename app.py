@@ -83,6 +83,8 @@ if 'authenticated' not in st.session_state:
     st.session_state['authenticated'] = False
 if 'user_id' not in st.session_state:
     st.session_state['user_id'] = ""
+if 'selected_agencies' not in st.session_state:
+    st.session_state['selected_agencies'] = []
 
 def log_login_to_bigquery(_bq_client, input_user_id, input_password, login_result, current_session_id):
     """
@@ -147,7 +149,7 @@ def show_login_form(bq_client):
     """
     ログインフォームを表示します。
     """
-    st.title("省庁資料検索ツール(PoC版_v2) - ログイン")
+    st.title("省庁資料検索ツール(PoC版) - ログイン")
     
     with st.form("login_form"):
         user_id = st.text_input("ユーザーID")
@@ -250,7 +252,7 @@ def run_search(_bq_client, dataset, table, column_names, keyword, agencies, cate
     where_conditions = []
     query_params = []
 
-    if agencies:
+    if agencies and len(agencies) > 0:
         where_conditions.append("agency IN UNNEST(@agencies)")
         query_params.append(bigquery.ArrayQueryParameter("agencies", "STRING", agencies))
         
@@ -287,6 +289,7 @@ def run_search(_bq_client, dataset, table, column_names, keyword, agencies, cate
         return df
     except Exception as e:
         st.error(f"検索エラー: {e}")
+        st.error(f"実行したクエリ: {final_query}")
         return pd.DataFrame()
 
 def log_search_to_bigquery(_bq_client, tab_name, keyword, agencies, categories, sub_categories, years, file_count, page_count):
@@ -315,7 +318,9 @@ def log_search_to_bigquery(_bq_client, tab_name, keyword, agencies, categories, 
             }
         ]
         
-        _bq_client.insert_rows_json(log_table_id, rows_to_insert)
+        errors = _bq_client.insert_rows_json(log_table_id, rows_to_insert)
+        if errors:
+            st.warning(f"検索ログ記録エラー: {errors}")
     except Exception as e:
         st.warning(f"検索ログ記録エラー: {e}")
 
@@ -323,7 +328,7 @@ def main_app(bq_client):
     """
     認証後に表示されるメインアプリケーション
     """
-    st.title("省庁資料検索ツール_v2")
+    st.title("省庁資料検索ツール(Streamlit版)")
     
     # サイドバー (フィルタ)
     st.sidebar.header("🔽 条件絞り込み")
@@ -333,21 +338,25 @@ def main_app(bq_client):
     # ツリー形式の省庁選択
     tree_data = load_ministry_tree()
     
-    agencies = []  # デフォルト値を設定
     with st.sidebar:
-        st.markdown("省庁:")
+        st.markdown("### 本局/外局:")
         if tree_data:
             tree_result = st_ant_tree(
                 treeData=tree_data,
                 treeCheckable=True,
                 allowClear=True,
-                key="agency_tree"  # keyを追加して状態を保持
+                key="agency_tree"
             )
-            agencies = extract_agencies_from_tree_result(tree_result)
+            
+            # ツリー選択結果をセッションステートに保存
+            current_agencies = extract_agencies_from_tree_result(tree_result)
+            st.session_state['selected_agencies'] = current_agencies
             
             # デバッグ用：選択された本局/外局を表示
-            if agencies:
-                st.caption(f"選択中: {', '.join(agencies)}")
+            if st.session_state['selected_agencies']:
+                st.caption(f"選択中: {', '.join(st.session_state['selected_agencies'])}")
+            else:
+                st.caption("選択なし")
         else:
             st.error("省庁ツリーの読み込みに失敗しました。")
     
@@ -386,6 +395,7 @@ def main_app(bq_client):
     st.sidebar.markdown("")
     
     if st.sidebar.button("フィルタをリセット", use_container_width=True):
+        st.session_state['selected_agencies'] = []
         st.rerun()
     
     st.sidebar.markdown("")
@@ -393,14 +403,25 @@ def main_app(bq_client):
     if st.sidebar.button("ログアウト", use_container_width=True):
         st.session_state['authenticated'] = False
         st.session_state['user_id'] = ""
+        st.session_state['selected_agencies'] = []
         st.rerun()
 
     # メインコンテンツ (検索結果をタブで表示)
     st.markdown("---")
 
     if search_button:
-        # デバッグ: 検索時のagenciesの値を確認
-        st.sidebar.info(f"検索実行: agencies={agencies}")
+        # セッションステートからagenciesを取得
+        agencies = st.session_state.get('selected_agencies', [])
+        
+        # デバッグ: 検索時のパラメータを表示
+        st.info(f"""
+        検索実行:
+        - 本局/外局: {agencies if agencies else '(未選択)'}
+        - カテゴリ: {categories if categories else '(未選択)'}
+        - 資料形式: {sub_categories if sub_categories else '(未選択)'}
+        - 年度: {years if years else '(未選択)'}
+        - キーワード: {keyword if keyword else '(未入力)'}
+        """)
         
         with st.spinner("🔄 検索中..."):
             # 各テーブルから検索結果を取得
@@ -435,9 +456,10 @@ def main_app(bq_client):
                         
                         st.success(f"{file_count}ファイル・{page_count}ページ ヒットしました")
                         
+                        # ログを記録
                         log_search_to_bigquery(
                             bq_client, tab_name, keyword, agencies, categories, 
-                            sub_categories, [str(y) for y in years], file_count, page_count
+                            sub_categories, years, file_count, page_count
                         )
                         
                         # データフレームを縦長表示(高さ2000px)
