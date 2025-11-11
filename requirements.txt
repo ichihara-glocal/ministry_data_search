@@ -2,3 +2,4 @@ streamlit
 pandas
 google-cloud-bigquery
 db-dtypes
+st-ant-tree

@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
+import json
+from pathlib import Path
 from google.cloud import bigquery
 from google.oauth2 import service_account
+from st_ant_tree import st_ant_tree
 
 # ----------------------------------------------------------------------
 # ページ設定
@@ -12,7 +15,7 @@ st.set_page_config(
 )
 
 # ----------------------------------------------------------------------
-# テーブル設定（各タブ用）
+# テーブル設定(各タブ用)
 # ----------------------------------------------------------------------
 TABLE_CONFIGS = {
     "予算": {
@@ -142,7 +145,7 @@ def show_login_form(bq_client):
     """
     ログインフォームを表示します。
     """
-    st.title("省庁資料検索ツール（PoC版） - ログイン")
+    st.title("省庁資料検索ツール(PoC版) - ログイン")
     
     with st.form("login_form"):
         user_id = st.text_input("ユーザーID")
@@ -163,6 +166,43 @@ def show_login_form(bq_client):
                 else:
                     log_login_to_bigquery(bq_client, user_id, password, 'failed', user_id)
                     st.error("ユーザーIDまたはパスワードが間違っています。")
+
+# ----------------------------------------------------------------------
+# ツリーデータ読み込み
+# ----------------------------------------------------------------------
+
+@st.cache_data
+def load_ministry_tree():
+    """
+    ministry_tree.jsonを読み込みます。
+    """
+    file_path = Path(__file__).parent / "ministry_tree.json"
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        st.error(f"エラー: '{file_path.name}' が見つかりません。")
+        return []
+    except json.JSONDecodeError:
+        st.error(f"エラー: '{file_path.name}' のJSON形式が不正です。")
+        return []
+
+def extract_ministries_from_tree_result(tree_result):
+    """
+    st_ant_treeの結果から選択された省庁名のリストを抽出します。
+    """
+    if not tree_result:
+        return []
+    
+    ministries = []
+    
+    # checkedキーから値を取得
+    if 'checked' in tree_result:
+        checked_items = tree_result['checked']
+        if isinstance(checked_items, list):
+            ministries.extend(checked_items)
+    
+    return ministries
 
 # ----------------------------------------------------------------------
 # メインアプリケーション
@@ -280,13 +320,29 @@ def main_app(bq_client):
     """
     認証後に表示されるメインアプリケーション
     """
-    st.title("省庁資料検索ツール（Streamlit版）")
+    st.title("省庁資料検索ツール(Streamlit版)")
     
     # サイドバー (フィルタ)
     st.sidebar.header("🔽 条件絞り込み")
     
     keyword = st.sidebar.text_input("キーワード", placeholder="キーワードを入力")
-        
+    
+    # ツリー形式の省庁選択
+    st.sidebar.markdown("### 省庁:")
+    tree_data = load_ministry_tree()
+    
+    if tree_data:
+        tree_result = st_ant_tree(
+            treeData=tree_data,
+            treeCheckable=True,
+            allowClear=True,
+            key="ministry_tree"
+        )
+        ministries = extract_ministries_from_tree_result(tree_result)
+    else:
+        ministries = []
+        st.sidebar.error("省庁ツリーの読み込みに失敗しました。")
+    
     # 全テーブルのメタデータを統合して読み込み
     with st.spinner("フィルタを読み込み中..."):
         all_meta_dfs = []
@@ -301,10 +357,6 @@ def main_app(bq_client):
             st.sidebar.error("フィルタの読み込みに失敗しました。")
             st.stop()
 
-    ministries = st.sidebar.multiselect(
-        "省庁:",
-        sorted(combined_meta_df['ministry'].unique())
-    )
     categories = st.sidebar.multiselect(
         "カテゴリ:",
         sorted(combined_meta_df['category'].unique())
@@ -320,7 +372,7 @@ def main_app(bq_client):
 
     st.sidebar.markdown("---")
     
-    # 検索ボタン（赤色）
+    # 検索ボタン(赤色)
     search_button = st.sidebar.button("🔍 検索", type="primary", use_container_width=True)
     
     st.sidebar.markdown("")
@@ -377,7 +429,7 @@ def main_app(bq_client):
                             sub_categories, [str(y) for y in years], file_count, page_count
                         )
                         
-                        # データフレームを縦長表示（高さ2000px）
+                        # データフレームを縦長表示(高さ2000px)
                         # column_configでURLをハイパーリンク化
                         url_col = column_names.get('source_url')
                         if url_col:
