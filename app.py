@@ -43,6 +43,7 @@ TABLE_CONFIGS = {
             'title': 'タイトル',
             'ministry': '省庁',
             'agency': '本局/外局',
+            'council': '会議体名',
             'fiscal_year_start': '年度',
             'category': 'カテゴリ',
             'sub_category': '資料形式',
