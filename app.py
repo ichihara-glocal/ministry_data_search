@@ -25,6 +25,7 @@ TABLE_CONFIGS = {
             'file_id': 'ファイルID',
             'title': 'タイトル',
             'ministry': '省庁',
+            'agency': '局・庁',
             'fiscal_year_start': '年度',
             'category': 'カテゴリ',
             'sub_category': '資料形式',
@@ -40,6 +41,7 @@ TABLE_CONFIGS = {
             'file_id': 'ファイルID',
             'title': 'タイトル',
             'ministry': '省庁',
+            'agency': '局・庁',
             'fiscal_year_start': '年度',
             'category': 'カテゴリ',
             'sub_category': '資料形式',
@@ -187,22 +189,59 @@ def load_ministry_tree():
         st.error(f"エラー: '{file_path.name}' のJSON形式が不正です。")
         return []
 
-def extract_ministries_from_tree_result(tree_result):
+def parse_tree_selection(tree_result, tree_data):
     """
-    st_ant_treeの結果から選択された省庁名のリストを抽出します。
-    """
-    if not tree_result:
-        return []
+    st_ant_treeの結果から選択されたノードを解析し、
+    親ノード(省庁)と子ノード(agency)に分離します。
     
+    Args:
+        tree_result: st_ant_treeの戻り値
+        tree_data: ツリーの構造データ
+        
+    Returns:
+        dict: {'ministries': [...], 'agencies': [...]}
+    """
+    if not tree_result or 'checked' not in tree_result:
+        return {'ministries': [], 'agencies': []}
+    
+    checked_items = tree_result.get('checked', [])
+    if not isinstance(checked_items, list):
+        return {'ministries': [], 'agencies': []}
+    
+    # ツリー構造から親子関係を把握
+    parent_keys = set()
+    child_to_parent = {}
+    
+    def traverse_tree(nodes, parent_key=None):
+        for node in nodes:
+            key = node.get('key') or node.get('title')
+            if parent_key is None:
+                # 親ノード(省庁)
+                parent_keys.add(key)
+            else:
+                # 子ノード(agency)
+                child_to_parent[key] = parent_key
+            
+            # 再帰的に子ノードを処理
+            if 'children' in node:
+                traverse_tree(node['children'], key)
+    
+    traverse_tree(tree_data)
+    
+    # 選択されたアイテムを分類
     ministries = []
+    agencies = []
     
-    # checkedキーから値を取得
-    if 'checked' in tree_result:
-        checked_items = tree_result['checked']
-        if isinstance(checked_items, list):
-            ministries.extend(checked_items)
+    for item in checked_items:
+        if item in parent_keys:
+            ministries.append(item)
+        elif item in child_to_parent:
+            agencies.append(item)
     
-    return ministries
+    return {
+        'ministries': ministries,
+        'agencies': agencies
+    }
 
 # ----------------------------------------------------------------------
 # メインアプリケーション
@@ -216,12 +255,13 @@ def load_metadata(_bq_client, dataset, table):
     query = f"""
       SELECT 
         ministry,
+        agency,
         category,
         sub_category,
         fiscal_year_start
       FROM `{st.secrets["bigquery"]["project_id"]}.{dataset}.{table}`
-      GROUP BY ministry, category, sub_category, fiscal_year_start
-      ORDER BY ministry, category, sub_category, fiscal_year_start
+      GROUP BY ministry, agency, category, sub_category, fiscal_year_start
+      ORDER BY ministry, agency, category, sub_category, fiscal_year_start
     """
     try:
         df = _bq_client.query(query).to_dataframe()
@@ -230,9 +270,10 @@ def load_metadata(_bq_client, dataset, table):
         st.error(f"メタデータの読み込みエラー: {e}")
         return pd.DataFrame()
 
-def run_search(_bq_client, dataset, table, column_names, keyword, ministries, categories, sub_categories, years):
+def run_search(_bq_client, dataset, table, column_names, keyword, ministries, agencies, categories, sub_categories, years):
     """
     検索クエリを実行します。
+    親ノード(省庁)はministryカラムで、子ノード(agency)はagencyカラムでフィルタリングします。
     """
     # カラム名のリストを取得
     db_columns = list(column_names.keys())
@@ -247,9 +288,19 @@ def run_search(_bq_client, dataset, table, column_names, keyword, ministries, ca
     where_conditions = []
     query_params = []
 
+    # 省庁とagencyの条件を構築
+    org_conditions = []
     if ministries:
-        where_conditions.append("ministry IN UNNEST(@ministries)")
+        org_conditions.append("ministry IN UNNEST(@ministries)")
         query_params.append(bigquery.ArrayQueryParameter("ministries", "STRING", ministries))
+        
+    if agencies:
+        org_conditions.append("agency IN UNNEST(@agencies)")
+        query_params.append(bigquery.ArrayQueryParameter("agencies", "STRING", agencies))
+    
+    # 省庁とagencyの条件をORで結合
+    if org_conditions:
+        where_conditions.append(f"({' OR '.join(org_conditions)})")
         
     if categories:
         where_conditions.append("category IN UNNEST(@categories)")
@@ -273,7 +324,7 @@ def run_search(_bq_client, dataset, table, column_names, keyword, ministries, ca
     else:
         final_query = base_query
         
-    final_query += " ORDER BY ministry, category, fiscal_year_start"
+    final_query += " ORDER BY ministry, agency, category, fiscal_year_start"
 
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
     
@@ -286,7 +337,7 @@ def run_search(_bq_client, dataset, table, column_names, keyword, ministries, ca
         st.error(f"検索エラー: {e}")
         return pd.DataFrame()
 
-def log_search_to_bigquery(_bq_client, tab_name, keyword, ministries, categories, sub_categories, years, file_count, page_count):
+def log_search_to_bigquery(_bq_client, tab_name, keyword, ministries, agencies, categories, sub_categories, years, file_count, page_count):
     """
     検索ログをBigQueryに保存します。
     """
@@ -304,6 +355,7 @@ def log_search_to_bigquery(_bq_client, tab_name, keyword, ministries, categories
                 "tab_name": tab_name,
                 "keyword": keyword,
                 "filter_ministries": ", ".join(ministries), 
+                "filter_agencies": ", ".join(agencies),
                 "filter_category": ", ".join(categories),
                 "filter_subcategory": ", ".join(sub_categories),
                 "filter_year": ", ".join([str(y) for y in years]),
@@ -338,13 +390,21 @@ def main_app(bq_client):
                 treeCheckable=True,
                 allowClear=True
             )
-            ministries = extract_ministries_from_tree_result(tree_result)
+            selection = parse_tree_selection(tree_result, tree_data)
+            ministries = selection['ministries']
+            agencies = selection['agencies']
             
-            # デバッグ用：選択された省庁を表示
-            if ministries:
-                st.caption(f"選択中: {', '.join(ministries)}")
+            # デバッグ用：選択された省庁とagencyを表示
+            if ministries or agencies:
+                display_parts = []
+                if ministries:
+                    display_parts.append(f"省庁: {', '.join(ministries)}")
+                if agencies:
+                    display_parts.append(f"局・庁: {', '.join(agencies)}")
+                st.caption(" | ".join(display_parts))
         else:
             ministries = []
+            agencies = []
             st.error("省庁ツリーの読み込みに失敗しました。")
     
     # 全テーブルのメタデータを統合して読み込み
@@ -405,7 +465,7 @@ def main_app(bq_client):
                 
                 results_df = run_search(
                     bq_client, dataset, table, column_names,
-                    keyword, ministries, categories, sub_categories, years
+                    keyword, ministries, agencies, categories, sub_categories, years
                 )
                 all_results[tab_name] = {
                     "df": results_df,
@@ -429,7 +489,7 @@ def main_app(bq_client):
                         st.success(f"{file_count}ファイル・{page_count}ページ ヒットしました")
                         
                         log_search_to_bigquery(
-                            bq_client, tab_name, keyword, ministries, categories, 
+                            bq_client, tab_name, keyword, ministries, agencies, categories, 
                             sub_categories, [str(y) for y in years], file_count, page_count
                         )
                         
