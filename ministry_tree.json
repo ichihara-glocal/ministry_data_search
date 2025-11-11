@@ -7,7 +7,6 @@
     "value": "内閣府",
     "title": "内閣府",
     "children": [
-      {"value": "内閣府", "title": "内閣府"},
       {"value": "宮内庁", "title": "宮内庁"},
       {"value": "公正取引委員会", "title": "公正取引委員会"},
       {"value": "国家公安委員会", "title": "国家公安委員会"},
@@ -24,7 +23,6 @@
     "value": "総務省",
     "title": "総務省",
     "children": [
-      {"value": "総務省", "title": "総務省"},
       {"value": "公害等調整委員会", "title": "公害等調整委員会"},
       {"value": "消防庁", "title": "消防庁"}
     ]
@@ -33,7 +31,6 @@
     "value": "法務省",
     "title": "法務省",
     "children": [
-      {"value": "法務省", "title": "法務省"},
       {"value": "公安調査庁", "title": "公安調査庁"}
     ]
   },
@@ -42,7 +39,6 @@
     "value": "財務省",
     "title": "財務省",
     "children": [
-      {"value": "財務省", "title": "財務省"},
       {"value": "国税庁", "title": "国税庁"}
     ]
   },
@@ -50,7 +46,6 @@
     "value": "文部科学省",
     "title": "文部科学省",
     "children": [
-      {"value": "文部科学省", "title": "文部科学省"},
       {"value": "文化庁", "title": "文化庁"},
       {"value": "スポーツ庁", "title": "スポーツ庁"}
     ]
@@ -59,7 +54,6 @@
     "value": "厚生労働省",
     "title": "厚生労働省",
     "children": [
-      {"value": "厚生労働省", "title": "厚生労働省"},
       {"value": "中央労働委員会", "title": "中央労働委員会"}
     ]
   },
@@ -67,7 +61,6 @@
     "value": "農林水産省",
     "title": "農林水産省",
     "children": [
-      {"value": "農林水産省", "title": "農林水産省"},
       {"value": "林野庁", "title": "林野庁"},
       {"value": "水産庁", "title": "水産庁"}
     ]
@@ -76,7 +69,6 @@
     "value": "経済産業省",
     "title": "経済産業省",
     "children": [
-      {"value": "経済産業省", "title": "経済産業省"},
       {"value": "資源エネルギー庁", "title": "資源エネルギー庁"},
       {"value": "特許庁", "title": "特許庁"},
       {"value": "中小企業庁", "title": "中小企業庁"}
@@ -86,7 +78,6 @@
     "value": "国土交通省",
     "title": "国土交通省",
     "children": [
-      {"value": "国土交通省", "title": "国土交通省"},
       {"value": "観光庁", "title": "観光庁"},
       {"value": "気象庁", "title": "気象庁"},
       {"value": "運輸安全委員会", "title": "運輸安全委員会"},
@@ -97,7 +88,6 @@
     "value": "環境省",
     "title": "環境省",
     "children": [
-      {"value": "環境省", "title": "環境省"},
       {"value": "原子力規制委員会", "title": "原子力規制委員会"}
     ]
   },
@@ -105,7 +95,6 @@
     "value": "防衛省",
     "title": "防衛省",
     "children": [
-      {"value": "防衛省", "title": "防衛省"},
       {"value": "防衛装備庁", "title": "防衛装備庁"}
     ]
   }
