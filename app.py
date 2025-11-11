@@ -348,8 +348,13 @@ def main_app(bq_client):
                 key="agency_tree"
             )
             
+            # デバッグ: tree_resultの中身を表示
+            st.write("DEBUG - tree_result:", tree_result)
+            st.write("DEBUG - tree_result type:", type(tree_result))
+            
             # ツリー選択結果をセッションステートに保存
             current_agencies = extract_agencies_from_tree_result(tree_result)
+            st.write("DEBUG - current_agencies:", current_agencies)
             st.session_state['selected_agencies'] = current_agencies
             
             # デバッグ用：選択された本局/外局を表示
