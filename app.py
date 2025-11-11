@@ -341,8 +341,7 @@ def main_app(bq_client):
                 treeData=tree_data,
                 treeCheckable=True,
                 allowClear=True,
-                key="ministry_tree",
-                height=400
+                key="ministry_tree"
             )
             ministries = extract_ministries_from_tree_result(tree_result)
             
