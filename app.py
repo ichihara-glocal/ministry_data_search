@@ -97,6 +97,8 @@ if 'session_id' not in st.session_state:
     st.session_state['session_id'] = ""
 if 'selected_agencies' not in st.session_state:
     st.session_state['selected_agencies'] = []
+if 'selected_councils' not in st.session_state:
+    st.session_state['selected_councils'] = []
 if 'search_results' not in st.session_state:
     st.session_state['search_results'] = None
 
@@ -212,6 +214,43 @@ def load_ministry_tree():
         st.error(f"エラー: '{file_path}' のJSON形式が不正です。")
         return []
 
+@st.cache_data(ttl=3600)
+def load_council_list(_bq_client):
+    """
+    BigQueryから会議体リストを読み込み、ツリー形式に変換します。
+    """
+    query = f"""
+        SELECT 
+            title,
+            value,
+            ministry
+        FROM `{st.secrets["bigquery"]["project_id"]}.{st.secrets["bigquery"]["rawdata_dataset"]}.{st.secrets["bigquery"]["council_list"]}`
+        ORDER BY ministry, title
+    """
+    try:
+        df = _bq_client.query(query).to_dataframe()
+        
+        # ministryごとにグループ化してツリー形式に変換
+        tree_data = []
+        ministry_groups = df.groupby('ministry')
+        
+        for ministry, group in ministry_groups:
+            children = [
+                {"title": row['title'], "value": row['value']}
+                for _, row in group.iterrows()
+            ]
+            
+            tree_data.append({
+                "title": ministry,
+                "value": ministry,
+                "children": children
+            })
+        
+        return tree_data
+    except Exception as e:
+        st.error(f"会議体リストの読み込みエラー: {e}")
+        return []
+
 @st.cache_data
 def load_filter_choices():
     """
@@ -263,7 +302,7 @@ def extract_agencies_from_tree_result(tree_result):
 # メインアプリケーション
 # ----------------------------------------------------------------------
 
-def run_search(_bq_client, dataset, table, column_names, keyword, agencies, categories, sub_categories, years):
+def run_search(_bq_client, dataset, table, column_names, keyword, agencies, councils, categories, sub_categories, years):
     """
     検索クエリを実行します。
     """
@@ -282,6 +321,10 @@ def run_search(_bq_client, dataset, table, column_names, keyword, agencies, cate
     if agencies and len(agencies) > 0:
         where_conditions.append("agency IN UNNEST(@agencies)")
         query_params.append(bigquery.ArrayQueryParameter("agencies", "STRING", agencies))
+    
+    if councils and len(councils) > 0:
+        where_conditions.append("council IN UNNEST(@councils)")
+        query_params.append(bigquery.ArrayQueryParameter("councils", "STRING", councils))
         
     if categories:
         where_conditions.append("category IN UNNEST(@categories)")
@@ -317,7 +360,7 @@ def run_search(_bq_client, dataset, table, column_names, keyword, agencies, cate
         st.error(f"検索エラー: {e}")
         return pd.DataFrame()
 
-def log_search_to_bigquery(_bq_client, keyword, agencies, categories, sub_categories, years):
+def log_search_to_bigquery(_bq_client, keyword, agencies, councils, categories, sub_categories, years):
     """
     検索ログをBigQueryに保存します。
     """
@@ -334,6 +377,7 @@ def log_search_to_bigquery(_bq_client, keyword, agencies, categories, sub_catego
                 "sessionId": st.session_state['session_id'],
                 "keyword": keyword if keyword else "",
                 "filter_ministries": ", ".join(agencies) if agencies else "",
+                "filter_councils": ", ".join(councils) if councils else "",
                 "filter_category": ", ".join(categories) if categories else "",
                 "filter_subcategory": ", ".join(sub_categories) if sub_categories else "",
                 "filter_year": ", ".join([str(y) for y in years]) if years else ""
@@ -383,6 +427,29 @@ def main_app(bq_client):
         else:
             st.error("省庁ツリーの読み込みに失敗しました。")
     
+    # 会議体選択（会議資料タブ用）
+    council_tree_data = load_council_list(bq_client)
+    
+    with st.sidebar:
+        st.markdown("会議体（会議資料のみ）")
+        if council_tree_data:
+            council_result = st_ant_tree(
+                treeData=council_tree_data,
+                treeCheckable=True,
+                allowClear=True,
+                key="council_tree"
+            )
+            
+            current_councils = extract_agencies_from_tree_result(council_result)
+            st.session_state['selected_councils'] = current_councils
+            
+            if st.session_state['selected_councils']:
+                st.caption(f"選択中: {len(st.session_state['selected_councils'])}件")
+            else:
+                st.caption("選択なし")
+        else:
+            st.info("会議体リストがありません")
+    
     # カテゴリ選択
     category_options = {item['title']: item['value'] for item in filter_choices['category']}
     selected_category_titles = st.sidebar.multiselect(
@@ -415,6 +482,7 @@ def main_app(bq_client):
     
     if st.sidebar.button("フィルタをリセット", use_container_width=True):
         st.session_state['selected_agencies'] = []
+        st.session_state['selected_councils'] = []
         st.session_state['search_results'] = None
         st.rerun()
     
@@ -425,6 +493,7 @@ def main_app(bq_client):
         st.session_state['user_id'] = ""
         st.session_state['session_id'] = ""
         st.session_state['selected_agencies'] = []
+        st.session_state['selected_councils'] = []
         st.session_state['search_results'] = None
         st.rerun()
 
@@ -433,10 +502,11 @@ def main_app(bq_client):
 
     if search_button:
         agencies = st.session_state.get('selected_agencies', [])
+        councils = st.session_state.get('selected_councils', [])
         
         # 検索ログを記録（検索実行時に1回だけ）
         log_search_to_bigquery(
-            bq_client, keyword, agencies, categories, 
+            bq_client, keyword, agencies, councils, categories, 
             sub_categories, years
         )
         
@@ -447,9 +517,12 @@ def main_app(bq_client):
                 table = tab_config["table"]
                 column_names = tab_config["columns"]
                 
+                # 会議資料タブの場合のみcouncilフィルタを適用
+                councils_for_search = councils if tab_name == "会議資料" else []
+                
                 results_df = run_search(
                     bq_client, dataset, table, column_names,
-                    keyword, agencies, categories, sub_categories, years
+                    keyword, agencies, councils_for_search, categories, sub_categories, years
                 )
                 all_results[tab_name] = {
                     "df": results_df,
