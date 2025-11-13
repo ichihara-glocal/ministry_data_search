@@ -11,7 +11,7 @@ from st_ant_tree import st_ant_tree
 # ページ設定
 # ----------------------------------------------------------------------
 st.set_page_config(
-    page_title="省庁資料検索ツール (Poc版_v2)",
+    page_title="省庁資料検索ツール (β版_v2)",
     layout="wide"
 )
 
@@ -37,7 +37,7 @@ TABLE_CONFIGS = {
     },
     "各種会議資料": {
         "dataset": st.secrets["bigquery"]["rawdata_dataset"],
-        "table": st.secrets["bigquery"]["meeting_table"],
+        "table": st.secrets["bigquery"]["council_table"],
         "columns": {
             'file_id': 'ファイルID',
             'title': 'タイトル',
@@ -167,7 +167,7 @@ def show_login_form(bq_client):
     """
     ログインフォームを表示します。
     """
-    st.title("省庁資料検索ツール (Poc版_v2) - ログイン")
+    st.title("省庁資料検索ツール (β版_v2) - ログイン")
     
     with st.form("login_form"):
         user_id = st.text_input("ユーザーID")
@@ -342,7 +342,7 @@ def main_app(bq_client):
     """
     認証後に表示されるメインアプリケーション
     """
-    st.title("省庁資料検索ツール (Poc版_v2)")
+    st.title("省庁資料検索ツール (β版_v2)")
     
     # サイドバー (フィルタ)
     st.sidebar.header("🔽 条件絞り込み")
