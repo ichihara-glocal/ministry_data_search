@@ -24,7 +24,7 @@ TABLE_CONFIGS = {
         "table": st.secrets["bigquery"]["budget_table"],
         "columns": {
             'file_id': 'ファイルID',
-            'title': 'タイトル',
+            'title': '資料名',
             'ministry': '省庁',
             'agency': '本局/外局',
             'fiscal_year_start': '年度',
@@ -40,7 +40,7 @@ TABLE_CONFIGS = {
         "table": st.secrets["bigquery"]["council_table"],
         "columns": {
             'file_id': 'ファイルID',
-            'title': 'タイトル',
+            'title': '資料名',
             'ministry': '省庁',
             'agency': '本局/外局',
             'council': '会議体名',
@@ -520,6 +520,14 @@ def main_app(bq_client):
         with st.spinner("🔄 検索中..."):
             all_results = {}
             for tab_name, tab_config in TABLE_CONFIGS.items():
+                # 会議体が選択されている場合は予算タブをスキップ
+                if councils and len(councils) > 0 and tab_name == "予算":
+                    all_results[tab_name] = {
+                        "df": pd.DataFrame(),
+                        "column_names": tab_config["columns"]
+                    }
+                    continue
+                
                 dataset = tab_config["dataset"]
                 table = tab_config["table"]
                 column_names = tab_config["columns"]
@@ -544,8 +552,15 @@ def main_app(bq_client):
         all_results = st.session_state['search_results']
         tabs = st.tabs(list(TABLE_CONFIGS.keys()))
         
+        councils = st.session_state.get('selected_councils', [])
+        
         for i, (tab_name, tab) in enumerate(zip(TABLE_CONFIGS.keys(), tabs)):
             with tab:
+                # 会議体が選択されている場合、予算タブには情報メッセージを表示
+                if councils and len(councils) > 0 and tab_name == "予算":
+                    st.info("会議体が選択されているため、予算の検索は実行されません。")
+                    continue
+                
                 results_df = all_results[tab_name]["df"]
                 column_names = all_results[tab_name]["column_names"]
                 
@@ -577,6 +592,9 @@ def main_app(bq_client):
                         st.dataframe(display_df, height=2000, use_container_width=True)
                 else:
                     st.info("該当する結果が見つかりませんでした。")
+    else:
+        # 検索前のデフォルト画面
+        st.info("🔍 条件を絞り込んで検索ボタンを押してください")
 
 # ----------------------------------------------------------------------
 # アプリケーションの実行
