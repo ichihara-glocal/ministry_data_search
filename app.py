@@ -193,24 +193,55 @@ def show_login_form(bq_client):
                     st.error("ユーザーIDまたはパスワードが間違っています。")
 
 # ----------------------------------------------------------------------
-# ツリーデータ読み込み
+# JSONデータ読み込み
 # ----------------------------------------------------------------------
 
 @st.cache_data
 def load_ministry_tree():
     """
-    ministry_tree.jsonを読み込みます。
+    choices/ministry_tree.jsonを読み込みます。
     """
-    file_path = Path(__file__).parent / "ministry_tree.json"
+    file_path = Path(__file__).parent / "choices" / "ministry_tree.json"
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     except FileNotFoundError:
-        st.error(f"エラー: '{file_path.name}' が見つかりません。")
+        st.error(f"エラー: '{file_path}' が見つかりません。")
         return []
     except json.JSONDecodeError:
-        st.error(f"エラー: '{file_path.name}' のJSON形式が不正です。")
+        st.error(f"エラー: '{file_path}' のJSON形式が不正です。")
         return []
+
+@st.cache_data
+def load_filter_choices():
+    """
+    カテゴリ、資料形式、年度の選択肢をJSONファイルから読み込みます。
+    """
+    base_path = Path(__file__).parent / "choices"
+    
+    choices = {
+        'category': [],
+        'sub_category': [],
+        'year': []
+    }
+    
+    files = {
+        'category': 'category.json',
+        'sub_category': 'sub_category.json',
+        'year': 'year.json'
+    }
+    
+    for key, filename in files.items():
+        file_path = base_path / filename
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                choices[key] = json.load(f)
+        except FileNotFoundError:
+            st.error(f"エラー: '{file_path}' が見つかりません。")
+        except json.JSONDecodeError:
+            st.error(f"エラー: '{file_path}' のJSON形式が不正です。")
+    
+    return choices
 
 def extract_agencies_from_tree_result(tree_result):
     """
@@ -231,29 +262,6 @@ def extract_agencies_from_tree_result(tree_result):
 # ----------------------------------------------------------------------
 # メインアプリケーション
 # ----------------------------------------------------------------------
-
-@st.cache_data(ttl=3600)
-def load_metadata(_bq_client, dataset, table):
-    """
-    フィルタ用のメタデータをBigQueryから読み込みます。
-    """
-    query = f"""
-      SELECT 
-        ministry,
-        agency,
-        category,
-        sub_category,
-        fiscal_year_start
-      FROM `{st.secrets["bigquery"]["project_id"]}.{dataset}.{table}`
-      GROUP BY ministry, agency, category, sub_category, fiscal_year_start
-      ORDER BY ministry, agency, category, sub_category, fiscal_year_start
-    """
-    try:
-        df = _bq_client.query(query).to_dataframe()
-        return df
-    except Exception as e:
-        st.error(f"メタデータの読み込みエラー: {e}")
-        return pd.DataFrame()
 
 def run_search(_bq_client, dataset, table, column_names, keyword, agencies, categories, sub_categories, years):
     """
@@ -344,6 +352,9 @@ def main_app(bq_client):
     """
     st.title("省庁資料検索ツール (β版_v2)")
     
+    # フィルタ選択肢の読み込み
+    filter_choices = load_filter_choices()
+    
     # サイドバー (フィルタ)
     st.sidebar.header("🔽 条件絞り込み")
     
@@ -372,32 +383,29 @@ def main_app(bq_client):
         else:
             st.error("省庁ツリーの読み込みに失敗しました。")
     
-    # 全テーブルのメタデータを統合して読み込み
-    with st.spinner("フィルタを読み込み中..."):
-        all_meta_dfs = []
-        for tab_name, tab_config in TABLE_CONFIGS.items():
-            meta_df = load_metadata(bq_client, tab_config["dataset"], tab_config["table"])
-            if not meta_df.empty:
-                all_meta_dfs.append(meta_df)
-        
-        if all_meta_dfs:
-            combined_meta_df = pd.concat(all_meta_dfs, ignore_index=True).drop_duplicates()
-        else:
-            st.sidebar.error("フィルタの読み込みに失敗しました。")
-            st.stop()
-
-    categories = st.sidebar.multiselect(
+    # カテゴリ選択
+    category_options = {item['title']: item['value'] for item in filter_choices['category']}
+    selected_category_titles = st.sidebar.multiselect(
         "カテゴリ:",
-        sorted(combined_meta_df['category'].unique())
+        options=list(category_options.keys())
     )
-    sub_categories = st.sidebar.multiselect(
+    categories = [category_options[title] for title in selected_category_titles]
+    
+    # 資料形式選択
+    sub_category_options = {item['title']: item['value'] for item in filter_choices['sub_category']}
+    selected_sub_category_titles = st.sidebar.multiselect(
         "資料形式:",
-        sorted(combined_meta_df['sub_category'].unique())
+        options=list(sub_category_options.keys())
     )
-    years = st.sidebar.multiselect(
+    sub_categories = [sub_category_options[title] for title in selected_sub_category_titles]
+    
+    # 年度選択
+    year_options = {item['title']: item['value'] for item in filter_choices['year']}
+    selected_year_titles = st.sidebar.multiselect(
         "年度:",
-        sorted(combined_meta_df['fiscal_year_start'].unique(), reverse=True)
+        options=list(year_options.keys())
     )
+    years = [year_options[title] for title in selected_year_titles]
 
     st.sidebar.markdown("---")
     

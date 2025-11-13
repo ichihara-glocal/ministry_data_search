@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import json
 from pathlib import Path
+from datetime import datetime
 from google.cloud import bigquery
 from google.oauth2 import service_account
 from st_ant_tree import st_ant_tree
@@ -10,7 +11,7 @@ from st_ant_tree import st_ant_tree
 # ページ設定
 # ----------------------------------------------------------------------
 st.set_page_config(
-    page_title="省庁資料検索ツール (Streamlit版)",
+    page_title="省庁資料検索ツール (β版_v2)",
     layout="wide"
 )
 
@@ -25,6 +26,7 @@ TABLE_CONFIGS = {
             'file_id': 'ファイルID',
             'title': 'タイトル',
             'ministry': '省庁',
+            'agency': '本局/外局',
             'fiscal_year_start': '年度',
             'category': 'カテゴリ',
             'sub_category': '資料形式',
@@ -33,13 +35,15 @@ TABLE_CONFIGS = {
             'content_text': '本文'
         }
     },
-    "各種会議資料": {
+    "会議資料": {
         "dataset": st.secrets["bigquery"]["rawdata_dataset"],
-        "table": st.secrets["bigquery"]["meeting_table"],
+        "table": st.secrets["bigquery"]["council_table"],
         "columns": {
             'file_id': 'ファイルID',
             'title': 'タイトル',
             'ministry': '省庁',
+            'agency': '本局/外局',
+            'council': '会議体名',
             'fiscal_year_start': '年度',
             'category': 'カテゴリ',
             'sub_category': '資料形式',
@@ -74,15 +78,33 @@ def get_bigquery_client():
         st.stop()
 
 # ----------------------------------------------------------------------
-# 認証とセッション管理
+# セッション管理
 # ----------------------------------------------------------------------
+
+def generate_session_id(user_id):
+    """
+    セッションIDを生成します。
+    形式: ログインID_YYYYMMDDhhmmssss
+    """
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    return f"{user_id}_{timestamp}"
 
 if 'authenticated' not in st.session_state:
     st.session_state['authenticated'] = False
 if 'user_id' not in st.session_state:
     st.session_state['user_id'] = ""
+if 'session_id' not in st.session_state:
+    st.session_state['session_id'] = ""
+if 'selected_agencies' not in st.session_state:
+    st.session_state['selected_agencies'] = []
+if 'search_results' not in st.session_state:
+    st.session_state['search_results'] = None
 
-def log_login_to_bigquery(_bq_client, input_user_id, input_password, login_result, current_session_id):
+# ----------------------------------------------------------------------
+# 認証
+# ----------------------------------------------------------------------
+
+def log_login_to_bigquery(_bq_client, input_user_id, input_password, login_result, session_id):
     """
     ログイン試行ログをBigQueryに保存します。
     """
@@ -99,7 +121,7 @@ def log_login_to_bigquery(_bq_client, input_user_id, input_password, login_resul
                 "id": input_user_id,
                 "password": input_password,
                 "result": login_result,
-                "sessionId": current_session_id 
+                "sessionId": session_id
             }
         ]
         
@@ -145,7 +167,7 @@ def show_login_form(bq_client):
     """
     ログインフォームを表示します。
     """
-    st.title("省庁資料検索ツール(PoC版) - ログイン")
+    st.title("省庁資料検索ツール (β版_v2) - ログイン")
     
     with st.form("login_form"):
         user_id = st.text_input("ユーザーID")
@@ -158,13 +180,16 @@ def show_login_form(bq_client):
                 return
 
             with st.spinner("認証中..."):
+                session_id = generate_session_id(user_id)
+                
                 if check_credentials_bigquery(bq_client, user_id, password):
                     st.session_state['authenticated'] = True
                     st.session_state['user_id'] = user_id
-                    log_login_to_bigquery(bq_client, user_id, password, 'success', user_id)
+                    st.session_state['session_id'] = session_id
+                    log_login_to_bigquery(bq_client, user_id, password, 'success', session_id)
                     st.rerun()
                 else:
-                    log_login_to_bigquery(bq_client, user_id, password, 'failed', user_id)
+                    log_login_to_bigquery(bq_client, user_id, password, 'failed', session_id)
                     st.error("ユーザーIDまたはパスワードが間違っています。")
 
 # ----------------------------------------------------------------------
@@ -187,22 +212,21 @@ def load_ministry_tree():
         st.error(f"エラー: '{file_path.name}' のJSON形式が不正です。")
         return []
 
-def extract_ministries_from_tree_result(tree_result):
+def extract_agencies_from_tree_result(tree_result):
     """
-    st_ant_treeの結果から選択された省庁名のリストを抽出します。
+    st_ant_treeの結果から選択された本局/外局名のリストを抽出します。
     """
     if not tree_result:
         return []
     
-    ministries = []
+    if isinstance(tree_result, list):
+        return tree_result
     
-    # checkedキーから値を取得
-    if 'checked' in tree_result:
-        checked_items = tree_result['checked']
-        if isinstance(checked_items, list):
-            ministries.extend(checked_items)
+    if isinstance(tree_result, dict):
+        if 'checked' in tree_result:
+            return tree_result['checked'] if isinstance(tree_result['checked'], list) else []
     
-    return ministries
+    return []
 
 # ----------------------------------------------------------------------
 # メインアプリケーション
@@ -216,12 +240,13 @@ def load_metadata(_bq_client, dataset, table):
     query = f"""
       SELECT 
         ministry,
+        agency,
         category,
         sub_category,
         fiscal_year_start
       FROM `{st.secrets["bigquery"]["project_id"]}.{dataset}.{table}`
-      GROUP BY ministry, category, sub_category, fiscal_year_start
-      ORDER BY ministry, category, sub_category, fiscal_year_start
+      GROUP BY ministry, agency, category, sub_category, fiscal_year_start
+      ORDER BY ministry, agency, category, sub_category, fiscal_year_start
     """
     try:
         df = _bq_client.query(query).to_dataframe()
@@ -230,11 +255,10 @@ def load_metadata(_bq_client, dataset, table):
         st.error(f"メタデータの読み込みエラー: {e}")
         return pd.DataFrame()
 
-def run_search(_bq_client, dataset, table, column_names, keyword, ministries, categories, sub_categories, years):
+def run_search(_bq_client, dataset, table, column_names, keyword, agencies, categories, sub_categories, years):
     """
     検索クエリを実行します。
     """
-    # カラム名のリストを取得
     db_columns = list(column_names.keys())
     columns_str = ", ".join(db_columns)
     
@@ -247,9 +271,9 @@ def run_search(_bq_client, dataset, table, column_names, keyword, ministries, ca
     where_conditions = []
     query_params = []
 
-    if ministries:
-        where_conditions.append("ministry IN UNNEST(@ministries)")
-        query_params.append(bigquery.ArrayQueryParameter("ministries", "STRING", ministries))
+    if agencies and len(agencies) > 0:
+        where_conditions.append("agency IN UNNEST(@agencies)")
+        query_params.append(bigquery.ArrayQueryParameter("agencies", "STRING", agencies))
         
     if categories:
         where_conditions.append("category IN UNNEST(@categories)")
@@ -273,20 +297,19 @@ def run_search(_bq_client, dataset, table, column_names, keyword, ministries, ca
     else:
         final_query = base_query
         
-    final_query += " ORDER BY ministry, category, fiscal_year_start"
+    final_query += " ORDER BY ministry, agency, category, fiscal_year_start"
 
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
     
     try:
         df = _bq_client.query(final_query, job_config=job_config).to_dataframe()
-        # カラム名を日本語に変換
         df = df.rename(columns=column_names)
         return df
     except Exception as e:
         st.error(f"検索エラー: {e}")
         return pd.DataFrame()
 
-def log_search_to_bigquery(_bq_client, tab_name, keyword, ministries, categories, sub_categories, years, file_count, page_count):
+def log_search_to_bigquery(_bq_client, keyword, agencies, categories, sub_categories, years):
     """
     検索ログをBigQueryに保存します。
     """
@@ -300,19 +323,18 @@ def log_search_to_bigquery(_bq_client, tab_name, keyword, ministries, categories
         rows_to_insert = [
             {
                 "timestamp": pd.Timestamp.now(tz='Asia/Tokyo').isoformat(),
-                "sessionId": st.session_state['user_id'],
-                "tab_name": tab_name,
-                "keyword": keyword,
-                "filter_ministries": ", ".join(ministries), 
-                "filter_category": ", ".join(categories),
-                "filter_subcategory": ", ".join(sub_categories),
-                "filter_year": ", ".join([str(y) for y in years]),
-                "file_count": file_count,
-                "page_count": page_count
+                "sessionId": st.session_state['session_id'],
+                "keyword": keyword if keyword else "",
+                "filter_ministries": ", ".join(agencies) if agencies else "",
+                "filter_category": ", ".join(categories) if categories else "",
+                "filter_subcategory": ", ".join(sub_categories) if sub_categories else "",
+                "filter_year": ", ".join([str(y) for y in years]) if years else ""
             }
         ]
         
-        _bq_client.insert_rows_json(log_table_id, rows_to_insert)
+        errors = _bq_client.insert_rows_json(log_table_id, rows_to_insert)
+        if errors:
+            st.warning(f"検索ログ記録エラー: {errors}")
     except Exception as e:
         st.warning(f"検索ログ記録エラー: {e}")
 
@@ -320,7 +342,7 @@ def main_app(bq_client):
     """
     認証後に表示されるメインアプリケーション
     """
-    st.title("省庁資料検索ツール(Streamlit版)")
+    st.title("省庁資料検索ツール (β版_v2)")
     
     # サイドバー (フィルタ)
     st.sidebar.header("🔽 条件絞り込み")
@@ -331,20 +353,23 @@ def main_app(bq_client):
     tree_data = load_ministry_tree()
     
     with st.sidebar:
-        st.markdown("### 省庁:")
+        st.markdown("省庁")
         if tree_data:
             tree_result = st_ant_tree(
                 treeData=tree_data,
                 treeCheckable=True,
-                allowClear=True
+                allowClear=True,
+                key="agency_tree"
             )
-            ministries = extract_ministries_from_tree_result(tree_result)
             
-            # デバッグ用：選択された省庁を表示
-            if ministries:
-                st.caption(f"選択中: {', '.join(ministries)}")
+            current_agencies = extract_agencies_from_tree_result(tree_result)
+            st.session_state['selected_agencies'] = current_agencies
+            
+            if st.session_state['selected_agencies']:
+                st.caption(f"選択中: {', '.join(st.session_state['selected_agencies'])}")
+            else:
+                st.caption("選択なし")
         else:
-            ministries = []
             st.error("省庁ツリーの読み込みに失敗しました。")
     
     # 全テーブルのメタデータを統合して読み込み
@@ -376,12 +401,13 @@ def main_app(bq_client):
 
     st.sidebar.markdown("---")
     
-    # 検索ボタン(赤色)
     search_button = st.sidebar.button("🔍 検索", type="primary", use_container_width=True)
     
     st.sidebar.markdown("")
     
     if st.sidebar.button("フィルタをリセット", use_container_width=True):
+        st.session_state['selected_agencies'] = []
+        st.session_state['search_results'] = None
         st.rerun()
     
     st.sidebar.markdown("")
@@ -389,14 +415,24 @@ def main_app(bq_client):
     if st.sidebar.button("ログアウト", use_container_width=True):
         st.session_state['authenticated'] = False
         st.session_state['user_id'] = ""
+        st.session_state['session_id'] = ""
+        st.session_state['selected_agencies'] = []
+        st.session_state['search_results'] = None
         st.rerun()
 
     # メインコンテンツ (検索結果をタブで表示)
     st.markdown("---")
 
     if search_button:
+        agencies = st.session_state.get('selected_agencies', [])
+        
+        # 検索ログを記録（検索実行時に1回だけ）
+        log_search_to_bigquery(
+            bq_client, keyword, agencies, categories, 
+            sub_categories, years
+        )
+        
         with st.spinner("🔄 検索中..."):
-            # 各テーブルから検索結果を取得
             all_results = {}
             for tab_name, tab_config in TABLE_CONFIGS.items():
                 dataset = tab_config["dataset"]
@@ -405,53 +441,50 @@ def main_app(bq_client):
                 
                 results_df = run_search(
                     bq_client, dataset, table, column_names,
-                    keyword, ministries, categories, sub_categories, years
+                    keyword, agencies, categories, sub_categories, years
                 )
                 all_results[tab_name] = {
                     "df": results_df,
                     "column_names": column_names
                 }
             
-            # タブで結果を表示
-            tabs = st.tabs(list(TABLE_CONFIGS.keys()))
-            
-            for i, (tab_name, tab) in enumerate(zip(TABLE_CONFIGS.keys(), tabs)):
-                with tab:
-                    results_df = all_results[tab_name]["df"]
-                    column_names = all_results[tab_name]["column_names"]
+            # 検索結果をセッションステートに保存
+            st.session_state['search_results'] = all_results
+    
+    # 検索結果の表示（セッションステートから取得）
+    if st.session_state['search_results'] is not None:
+        all_results = st.session_state['search_results']
+        tabs = st.tabs(list(TABLE_CONFIGS.keys()))
+        
+        for i, (tab_name, tab) in enumerate(zip(TABLE_CONFIGS.keys(), tabs)):
+            with tab:
+                results_df = all_results[tab_name]["df"]
+                column_names = all_results[tab_name]["column_names"]
+                
+                if not results_df.empty:
+                    page_count = len(results_df)
+                    file_id_col = column_names.get('file_id', 'file_id')
+                    file_count = results_df[file_id_col].nunique()
                     
-                    if not results_df.empty:
-                        page_count = len(results_df)
-                        # 日本語カラム名を使用してfile_idを取得
-                        file_id_col = column_names.get('file_id', 'file_id')
-                        file_count = results_df[file_id_col].nunique()
-                        
-                        st.success(f"{file_count}ファイル・{page_count}ページ ヒットしました")
-                        
-                        log_search_to_bigquery(
-                            bq_client, tab_name, keyword, ministries, categories, 
-                            sub_categories, [str(y) for y in years], file_count, page_count
+                    st.success(f"{file_count}ファイル・{page_count}ページ ヒットしました")
+                    
+                    url_col = column_names.get('source_url')
+                    if url_col:
+                        st.dataframe(
+                            results_df, 
+                            height=2000, 
+                            use_container_width=True,
+                            column_config={
+                                url_col: st.column_config.LinkColumn(
+                                    url_col,
+                                    display_text="📄リンク"
+                                )
+                            }
                         )
-                        
-                        # データフレームを縦長表示(高さ2000px)
-                        # column_configでURLをハイパーリンク化
-                        url_col = column_names.get('source_url')
-                        if url_col:
-                            st.dataframe(
-                                results_df, 
-                                height=2000, 
-                                use_container_width=True,
-                                column_config={
-                                    url_col: st.column_config.LinkColumn(
-                                        url_col,
-                                        display_text="📄リンク"
-                                    )
-                                }
-                            )
-                        else:
-                            st.dataframe(results_df, height=2000, use_container_width=True)
                     else:
-                        st.info("該当する結果が見つかりませんでした。")
+                        st.dataframe(results_df, height=2000, use_container_width=True)
+                else:
+                    st.info("該当する結果が見つかりませんでした。")
 
 # ----------------------------------------------------------------------
 # アプリケーションの実行
