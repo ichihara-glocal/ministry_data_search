@@ -403,19 +403,39 @@ def main_app(bq_client):
     """
     st.title("省庁資料検索ツール (β版_v2)")
     
+    # マニュアル表示用のダイアログ
+    @st.dialog("📖 使い方・収録データ情報", width="large")
+    def show_manual():
+        manual_path = Path(__file__).parent / "docs" / "manual.md"
+        try:
+            with open(manual_path, 'r', encoding='utf-8') as f:
+                st.markdown(f.read())
+        except FileNotFoundError:
+            st.error(f"マニュアルファイルが見つかりません: {manual_path}")
+            st.info("docs/manual.md を作成してください。")
+        
+        if st.button("閉じる", type="primary", use_container_width=True):
+            st.rerun()
+    
     # フィルタ選択肢の読み込み
     filter_choices = load_filter_choices()
     
     # サイドバー (フィルタ)
     st.sidebar.header("🔽 条件絞り込み")
     
-    keyword = st.sidebar.text_input("キーワード", placeholder="キーワードを入力")
+    # マニュアルボタン
+    if st.sidebar.button("📖 使い方・収録データ情報", use_container_width=True):
+        show_manual()
+    
+    st.sidebar.markdown("---")
+    
+    keyword = st.sidebar.text_input("**キーワード**", placeholder="キーワードを入力(複数の場合はスペースで区切る)")
     
     # ツリー形式の省庁選択
     tree_data = load_ministry_tree()
     
     with st.sidebar:
-        st.markdown("省庁")
+        st.markdown("**省庁**")
         if tree_data:
             tree_result = st_ant_tree(
                 treeData=tree_data,
@@ -438,7 +458,7 @@ def main_app(bq_client):
     council_tree_data = load_council_list(bq_client)
     
     with st.sidebar:
-        st.markdown("会議体（会議資料のみ）")
+        st.markdown("**会議体（会議資料のみ）**")
         if council_tree_data:
             council_result = st_ant_tree(
                 treeData=council_tree_data,
@@ -460,7 +480,7 @@ def main_app(bq_client):
     # カテゴリ選択
     category_options = {item['title']: item['value'] for item in filter_choices['category']}
     selected_category_titles = st.sidebar.multiselect(
-        "カテゴリ:",
+        "**カテゴリ**",
         options=list(category_options.keys())
     )
     categories = [category_options[title] for title in selected_category_titles]
@@ -468,7 +488,7 @@ def main_app(bq_client):
     # 資料形式選択
     sub_category_options = {item['title']: item['value'] for item in filter_choices['sub_category']}
     selected_sub_category_titles = st.sidebar.multiselect(
-        "資料形式:",
+        "**資料形式**",
         options=list(sub_category_options.keys())
     )
     sub_categories = [sub_category_options[title] for title in selected_sub_category_titles]
@@ -476,7 +496,7 @@ def main_app(bq_client):
     # 年度選択
     year_options = {item['title']: item['value'] for item in filter_choices['year']}
     selected_year_titles = st.sidebar.multiselect(
-        "年度:",
+        "**年度**",
         options=list(year_options.keys())
     )
     years = [year_options[title] for title in selected_year_titles]
