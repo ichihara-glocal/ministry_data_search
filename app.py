@@ -150,7 +150,7 @@ def check_credentials_bigquery(bq_client, user_id, password):
     
     try:
         query = f"""
-            SELECT id, is_admin
+            SELECT id, IFNULL(is_admin, FALSE) as is_admin
             FROM {auth_table_id_str}
             WHERE id = @user_id 
               AND pw = @password
@@ -169,7 +169,8 @@ def check_credentials_bigquery(bq_client, user_id, password):
         results = query_job.to_dataframe()
         
         if not results.empty:
-            return True, results.iloc[0]['is_admin']
+            is_admin = bool(results.iloc[0]['is_admin'])
+            return True, is_admin
         return False, False
         
     except Exception as e:
@@ -254,6 +255,7 @@ def get_all_users(bq_client):
                 update_dt,
                 is_alive
             FROM {auth_table_id}
+            WHERE is_admin = false or is_admin IS NULL
             ORDER BY create_dt DESC
         """
         
@@ -444,22 +446,10 @@ def show_register_modal(bq_client):
     """
     新規ユーザー登録モーダル
     """
-    if 'registration_complete' not in st.session_state:
-        st.session_state['registration_complete'] = False
+    if 'register_step' not in st.session_state:
+        st.session_state['register_step'] = 'input'
     
-    if st.session_state['registration_complete']:
-        st.success("ユーザーを登録しました！")
-        st.markdown(f"**ユーザーID**: {st.session_state['registered_id']}")
-        st.markdown(f"**コード**: {st.session_state['registered_code']}")
-        st.markdown(f"**パスワード**: {st.session_state['registered_password']}")
-        
-        if st.button("閉じる"):
-            st.session_state['registration_complete'] = False
-            del st.session_state['registered_id']
-            del st.session_state['registered_code']
-            del st.session_state['registered_password']
-            st.rerun()
-    else:
+    if st.session_state['register_step'] == 'input':
         st.markdown("ユーザーID・コードを入力してください")
         
         user_id = st.text_input("ユーザーID", key="register_user_id")
@@ -477,7 +467,7 @@ def show_register_modal(bq_client):
                     password = generate_password()
                     
                     if insert_user(bq_client, user_id, code, password):
-                        st.session_state['registration_complete'] = True
+                        st.session_state['register_step'] = 'complete'
                         st.session_state['registered_id'] = user_id
                         st.session_state['registered_code'] = code
                         st.session_state['registered_password'] = password
@@ -485,7 +475,23 @@ def show_register_modal(bq_client):
         
         with col2:
             if st.button("キャンセル", use_container_width=True):
+                st.session_state['register_step'] = 'input'
                 st.rerun()
+    
+    elif st.session_state['register_step'] == 'complete':
+        st.success("ユーザーを登録しました！")
+        st.markdown("")
+        st.markdown(f"**ユーザーID**: {st.session_state['registered_id']}")
+        st.markdown(f"**コード**: {st.session_state['registered_code']}")
+        st.markdown(f"**パスワード**: {st.session_state['registered_password']}")
+        st.markdown("")
+        
+        if st.button("閉じる", use_container_width=True):
+            st.session_state['register_step'] = 'input'
+            del st.session_state['registered_id']
+            del st.session_state['registered_code']
+            del st.session_state['registered_password']
+            st.rerun()
 
 @st.dialog("ユーザー情報編集", width="large")
 def show_edit_modal(bq_client):
@@ -503,6 +509,7 @@ def show_edit_modal(bq_client):
         if active_users.empty:
             st.info("編集可能なユーザーがいません")
             if st.button("閉じる"):
+                st.session_state['edit_step'] = 'select'
                 st.rerun()
             return
         
@@ -512,57 +519,46 @@ def show_edit_modal(bq_client):
             key="edit_select_user"
         )
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("編集する", type="primary", use_container_width=True):
-                st.session_state['edit_step'] = 'edit'
-                st.session_state['edit_user_id'] = selected_user_id
-                
-                user_data = active_users[active_users['id'] == selected_user_id].iloc[0]
-                st.session_state['edit_user_code'] = user_data['code']
-                st.session_state['edit_user_pw'] = user_data['pw']
-                st.rerun()
-        
-        with col2:
-            if st.button("キャンセル", use_container_width=True):
-                st.rerun()
-    
-    elif st.session_state['edit_step'] == 'edit':
-        st.markdown(f"**編集対象**: {st.session_state['edit_user_id']}")
-        st.markdown("---")
-        
-        st.markdown("現在の内容")
-        st.text(f"ユーザーID: {st.session_state['edit_user_id']}")
-        st.text(f"コード: {st.session_state['edit_user_code']}")
-        st.text(f"パスワード: {st.session_state['edit_user_pw']}")
-        
-        st.markdown("---")
-        st.markdown("新しい内容（空欄の場合は更新しません）")
-        
-        new_id = st.text_input("ユーザーID", key="edit_new_id")
-        new_code = st.text_input("コード", key="edit_new_code")
-        new_password = st.text_input("パスワード", key="edit_new_password")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("更新", type="primary", use_container_width=True):
-                st.session_state['edit_step'] = 'confirm_update'
-                st.session_state['edit_new_id'] = new_id if new_id else st.session_state['edit_user_id']
-                st.session_state['edit_new_code'] = new_code if new_code else st.session_state['edit_user_code']
-                st.session_state['edit_new_password'] = new_password if new_password else st.session_state['edit_user_pw']
-                st.rerun()
-        
-        with col2:
-            if st.button("削除", use_container_width=True):
-                st.session_state['edit_step'] = 'confirm_delete'
-                st.rerun()
-        
-        with col3:
-            if st.button("キャンセル", use_container_width=True):
-                st.session_state['edit_step'] = 'select'
-                st.rerun()
+        if selected_user_id:
+            user_data = active_users[active_users['id'] == selected_user_id].iloc[0]
+            
+            st.markdown("---")
+            st.markdown("**現在の内容**")
+            st.text(f"ユーザーID: {selected_user_id}")
+            st.text(f"コード: {user_data['code']}")
+            st.text(f"パスワード: {user_data['pw']}")
+            
+            st.markdown("---")
+            st.markdown("**新しい内容**（空欄の場合は更新しません）")
+            
+            new_id = st.text_input("ユーザーID", key="edit_new_id", placeholder=selected_user_id)
+            new_code = st.text_input("コード", key="edit_new_code", placeholder=user_data['code'])
+            new_password = st.text_input("パスワード", key="edit_new_password", placeholder=user_data['pw'])
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("更新", type="primary", use_container_width=True):
+                    st.session_state['edit_step'] = 'confirm_update'
+                    st.session_state['edit_user_id'] = selected_user_id
+                    st.session_state['edit_user_code'] = user_data['code']
+                    st.session_state['edit_user_pw'] = user_data['pw']
+                    st.session_state['edit_new_id'] = new_id if new_id else selected_user_id
+                    st.session_state['edit_new_code'] = new_code if new_code else user_data['code']
+                    st.session_state['edit_new_password'] = new_password if new_password else user_data['pw']
+                    st.rerun()
+            
+            with col2:
+                if st.button("削除", use_container_width=True):
+                    st.session_state['edit_step'] = 'confirm_delete'
+                    st.session_state['edit_user_id'] = selected_user_id
+                    st.session_state['edit_user_code'] = user_data['code']
+                    st.rerun()
+            
+            with col3:
+                if st.button("キャンセル", use_container_width=True):
+                    st.session_state['edit_step'] = 'select'
+                    st.rerun()
     
     elif st.session_state['edit_step'] == 'confirm_update':
         st.markdown("この内容で更新しますか？")
@@ -588,7 +584,7 @@ def show_edit_modal(bq_client):
         
         with col2:
             if st.button("キャンセル", use_container_width=True):
-                st.session_state['edit_step'] = 'edit'
+                st.session_state['edit_step'] = 'select'
                 st.rerun()
     
     elif st.session_state['edit_step'] == 'confirm_delete':
@@ -609,7 +605,7 @@ def show_edit_modal(bq_client):
         
         with col2:
             if st.button("キャンセル", use_container_width=True):
-                st.session_state['edit_step'] = 'edit'
+                st.session_state['edit_step'] = 'select'
                 st.rerun()
 
 # ----------------------------------------------------------------------
