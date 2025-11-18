@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import json
-import string
-import random
 from pathlib import Path
 from datetime import datetime
 from google.cloud import bigquery
@@ -97,10 +95,6 @@ if 'user_id' not in st.session_state:
     st.session_state['user_id'] = ""
 if 'session_id' not in st.session_state:
     st.session_state['session_id'] = ""
-if 'is_admin' not in st.session_state:
-    st.session_state['is_admin'] = False
-if 'show_admin_page' not in st.session_state:
-    st.session_state['show_admin_page'] = False
 if 'selected_agencies' not in st.session_state:
     st.session_state['selected_agencies'] = []
 if 'selected_councils' not in st.session_state:
@@ -140,7 +134,6 @@ def log_login_to_bigquery(_bq_client, input_user_id, input_password, login_resul
 def check_credentials_bigquery(bq_client, user_id, password):
     """
     BigQueryの認証テーブルをチェックします。
-    is_adminフラグも取得します。
     """
     auth_table_id_str = (
         f"`{st.secrets['bigquery']['project_id']}"
@@ -150,7 +143,7 @@ def check_credentials_bigquery(bq_client, user_id, password):
     
     try:
         query = f"""
-            SELECT id, IFNULL(is_admin, FALSE) as is_admin
+            SELECT id 
             FROM {auth_table_id_str}
             WHERE id = @user_id 
               AND pw = @password
@@ -168,14 +161,11 @@ def check_credentials_bigquery(bq_client, user_id, password):
         query_job = bq_client.query(query, job_config=job_config)
         results = query_job.to_dataframe()
         
-        if not results.empty:
-            is_admin = bool(results.iloc[0]['is_admin'])
-            return True, is_admin
-        return False, False
+        return not results.empty
         
     except Exception as e:
         st.error(f"認証エラー: {e}")
-        return False, False
+        return False
 
 def show_login_form(bq_client):
     """
@@ -196,459 +186,15 @@ def show_login_form(bq_client):
             with st.spinner("認証中..."):
                 session_id = generate_session_id(user_id)
                 
-                auth_result, is_admin = check_credentials_bigquery(bq_client, user_id, password)
-                
-                if auth_result:
+                if check_credentials_bigquery(bq_client, user_id, password):
                     st.session_state['authenticated'] = True
                     st.session_state['user_id'] = user_id
                     st.session_state['session_id'] = session_id
-                    st.session_state['is_admin'] = is_admin
                     log_login_to_bigquery(bq_client, user_id, password, 'success', session_id)
                     st.rerun()
                 else:
                     log_login_to_bigquery(bq_client, user_id, password, 'failed', session_id)
                     st.error("ユーザーIDまたはパスワードが間違っています。")
-
-# ----------------------------------------------------------------------
-# ユーティリティ関数
-# ----------------------------------------------------------------------
-
-def generate_password():
-    """
-    大文字・小文字・数字を必ず各1文字以上含む8文字のパスワードを生成します。
-    """
-    uppercase = random.choice(string.ascii_uppercase)
-    lowercase = random.choice(string.ascii_lowercase)
-    digit = random.choice(string.digits)
-    
-    remaining = ''.join(random.choices(
-        string.ascii_uppercase + string.ascii_lowercase + string.digits,
-        k=5
-    ))
-    
-    password_list = list(uppercase + lowercase + digit + remaining)
-    random.shuffle(password_list)
-    
-    return ''.join(password_list)
-
-# ----------------------------------------------------------------------
-# ユーザー管理機能
-# ----------------------------------------------------------------------
-
-def get_all_users(bq_client):
-    """
-    全ユーザー情報を取得します。
-    """
-    auth_table_id = (
-        f"`{st.secrets['bigquery']['project_id']}"
-        f".{st.secrets['bigquery']['config_dataset']}"
-        f".{st.secrets['bigquery']['auth_table']}`"
-    )
-    
-    try:
-        query = f"""
-            SELECT 
-                id,
-                code,
-                pw,
-                create_dt,
-                update_dt,
-                is_alive
-            FROM {auth_table_id}
-            WHERE is_admin = false or is_admin IS NULL
-            ORDER BY create_dt DESC
-        """
-        
-        df = bq_client.query(query).to_dataframe()
-        return df
-    except Exception as e:
-        st.error(f"ユーザー情報取得エラー: {e}")
-        return pd.DataFrame()
-
-def get_active_users(bq_client):
-    """
-    有効なユーザー情報を取得します。
-    """
-    auth_table_id = (
-        f"`{st.secrets['bigquery']['project_id']}"
-        f".{st.secrets['bigquery']['config_dataset']}"
-        f".{st.secrets['bigquery']['auth_table']}`"
-    )
-    
-    try:
-        query = f"""
-            SELECT 
-                id,
-                code,
-                pw
-            FROM {auth_table_id}
-            WHERE is_alive = TRUE
-            ORDER BY id
-        """
-        
-        df = bq_client.query(query).to_dataframe()
-        return df
-    except Exception as e:
-        st.error(f"ユーザー情報取得エラー: {e}")
-        return pd.DataFrame()
-
-def check_user_exists(bq_client, user_id):
-    """
-    ユーザーIDが既に存在するかチェックします。
-    """
-    auth_table_id = (
-        f"`{st.secrets['bigquery']['project_id']}"
-        f".{st.secrets['bigquery']['config_dataset']}"
-        f".{st.secrets['bigquery']['auth_table']}`"
-    )
-    
-    try:
-        query = f"""
-            SELECT id
-            FROM {auth_table_id}
-            WHERE id = @user_id
-            LIMIT 1
-        """
-        
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("user_id", "STRING", user_id),
-            ]
-        )
-        
-        results = bq_client.query(query, job_config=job_config).to_dataframe()
-        return not results.empty
-    except Exception as e:
-        st.error(f"ユーザー存在チェックエラー: {e}")
-        return False
-
-def insert_user(bq_client, user_id, code, password):
-    """
-    新規ユーザーを登録します。
-    """
-    auth_table_id = (
-        f"{st.secrets['bigquery']['project_id']}"
-        f".{st.secrets['bigquery']['config_dataset']}"
-        f".{st.secrets['bigquery']['auth_table']}"
-    )
-    
-    try:
-        timestamp = pd.Timestamp.now(tz='Asia/Tokyo').isoformat()
-        
-        rows_to_insert = [
-            {
-                "id": user_id,
-                "pw": password,
-                "code": code,
-                "is_alive": True,
-                "is_admin": False,
-                "create_dt": timestamp,
-                "update_dt": timestamp
-            }
-        ]
-        
-        errors = bq_client.insert_rows_json(auth_table_id, rows_to_insert)
-        
-        if errors:
-            st.error(f"ユーザー登録エラー: {errors}")
-            return False
-        return True
-    except Exception as e:
-        st.error(f"ユーザー登録エラー: {e}")
-        return False
-
-def update_user(bq_client, original_id, new_id, new_code, new_password):
-    """
-    ユーザー情報を更新します。
-    """
-    auth_table_id = (
-        f"`{st.secrets['bigquery']['project_id']}"
-        f".{st.secrets['bigquery']['config_dataset']}"
-        f".{st.secrets['bigquery']['auth_table']}`"
-    )
-    
-    try:
-        update_fields = []
-        params = [bigquery.ScalarQueryParameter("original_id", "STRING", original_id)]
-        
-        if new_id and new_id != original_id:
-            update_fields.append("id = @new_id")
-            params.append(bigquery.ScalarQueryParameter("new_id", "STRING", new_id))
-        
-        if new_code:
-            update_fields.append("code = @new_code")
-            params.append(bigquery.ScalarQueryParameter("new_code", "STRING", new_code))
-        
-        if new_password:
-            update_fields.append("pw = @new_password")
-            params.append(bigquery.ScalarQueryParameter("new_password", "STRING", new_password))
-        
-        timestamp = pd.Timestamp.now(tz='Asia/Tokyo').isoformat()
-        update_fields.append("update_dt = @update_dt")
-        params.append(bigquery.ScalarQueryParameter("update_dt", "TIMESTAMP", timestamp))
-        
-        if not update_fields:
-            return True
-        
-        query = f"""
-            UPDATE {auth_table_id}
-            SET {', '.join(update_fields)}
-            WHERE id = @original_id
-        """
-        
-        job_config = bigquery.QueryJobConfig(query_parameters=params)
-        bq_client.query(query, job_config=job_config).result()
-        
-        return True
-    except Exception as e:
-        st.error(f"ユーザー更新エラー: {e}")
-        return False
-
-def delete_user(bq_client, user_id):
-    """
-    ユーザーを論理削除します（is_aliveをfalseに設定）。
-    """
-    auth_table_id = (
-        f"`{st.secrets['bigquery']['project_id']}"
-        f".{st.secrets['bigquery']['config_dataset']}"
-        f".{st.secrets['bigquery']['auth_table']}`"
-    )
-    
-    try:
-        timestamp = pd.Timestamp.now(tz='Asia/Tokyo').isoformat()
-        
-        query = f"""
-            UPDATE {auth_table_id}
-            SET is_alive = FALSE,
-                update_dt = @update_dt
-            WHERE id = @user_id
-        """
-        
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("user_id", "STRING", user_id),
-                bigquery.ScalarQueryParameter("update_dt", "TIMESTAMP", timestamp)
-            ]
-        )
-        
-        bq_client.query(query, job_config=job_config).result()
-        return True
-    except Exception as e:
-        st.error(f"ユーザー削除エラー: {e}")
-        return False
-
-# ----------------------------------------------------------------------
-# モーダル関数
-# ----------------------------------------------------------------------
-
-@st.dialog("新規ユーザー登録", width="large")
-def show_register_modal(bq_client):
-    """
-    新規ユーザー登録モーダル
-    """
-    if 'register_step' not in st.session_state:
-        st.session_state['register_step'] = 'input'
-    
-    if st.session_state['register_step'] == 'input':
-        st.markdown("ユーザーID・コードを入力してください")
-        
-        user_id = st.text_input("ユーザーID", key="register_user_id")
-        code = st.text_input("コード", key="register_code")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("登録", type="primary", use_container_width=True):
-                if not user_id or not code:
-                    st.error("ユーザーIDとコードを入力してください")
-                elif check_user_exists(bq_client, user_id):
-                    st.error("入力されたユーザーIDは既に存在しています")
-                else:
-                    password = generate_password()
-                    
-                    if insert_user(bq_client, user_id, code, password):
-                        st.session_state['register_step'] = 'complete'
-                        st.session_state['registered_id'] = user_id
-                        st.session_state['registered_code'] = code
-                        st.session_state['registered_password'] = password
-                        st.rerun()
-        
-        with col2:
-            if st.button("キャンセル", use_container_width=True):
-                st.session_state['register_step'] = 'input'
-                st.rerun()
-    
-    elif st.session_state['register_step'] == 'complete':
-        st.success("ユーザーを登録しました！")
-        st.markdown("")
-        st.markdown(f"**ユーザーID**: {st.session_state['registered_id']}")
-        st.markdown(f"**コード**: {st.session_state['registered_code']}")
-        st.markdown(f"**パスワード**: {st.session_state['registered_password']}")
-        st.markdown("")
-        
-        if st.button("閉じる", use_container_width=True):
-            st.session_state['register_step'] = 'input'
-            del st.session_state['registered_id']
-            del st.session_state['registered_code']
-            del st.session_state['registered_password']
-            st.rerun()
-
-@st.dialog("ユーザー情報編集", width="large")
-def show_edit_modal(bq_client):
-    """
-    ユーザー情報編集モーダル
-    """
-    if 'edit_step' not in st.session_state:
-        st.session_state['edit_step'] = 'select'
-    
-    if st.session_state['edit_step'] == 'select':
-        st.markdown("ユーザーIDを選択してください")
-        
-        active_users = get_active_users(bq_client)
-        
-        if active_users.empty:
-            st.info("編集可能なユーザーがいません")
-            if st.button("閉じる"):
-                st.session_state['edit_step'] = 'select'
-                st.rerun()
-            return
-        
-        selected_user_id = st.selectbox(
-            "ユーザーID",
-            options=active_users['id'].tolist(),
-            key="edit_select_user"
-        )
-        
-        if selected_user_id:
-            user_data = active_users[active_users['id'] == selected_user_id].iloc[0]
-            
-            st.markdown("---")
-            st.markdown("**現在の内容**")
-            st.text(f"ユーザーID: {selected_user_id}")
-            st.text(f"コード: {user_data['code']}")
-            st.text(f"パスワード: {user_data['pw']}")
-            
-            st.markdown("---")
-            st.markdown("**新しい内容**（空欄の場合は更新しません）")
-            
-            new_id = st.text_input("ユーザーID", key="edit_new_id", placeholder=selected_user_id)
-            new_code = st.text_input("コード", key="edit_new_code", placeholder=user_data['code'])
-            new_password = st.text_input("パスワード", key="edit_new_password", placeholder=user_data['pw'])
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if st.button("更新", type="primary", use_container_width=True):
-                    st.session_state['edit_step'] = 'confirm_update'
-                    st.session_state['edit_user_id'] = selected_user_id
-                    st.session_state['edit_user_code'] = user_data['code']
-                    st.session_state['edit_user_pw'] = user_data['pw']
-                    st.session_state['edit_new_id'] = new_id if new_id else selected_user_id
-                    st.session_state['edit_new_code'] = new_code if new_code else user_data['code']
-                    st.session_state['edit_new_password'] = new_password if new_password else user_data['pw']
-                    st.rerun()
-            
-            with col2:
-                if st.button("削除", use_container_width=True):
-                    st.session_state['edit_step'] = 'confirm_delete'
-                    st.session_state['edit_user_id'] = selected_user_id
-                    st.session_state['edit_user_code'] = user_data['code']
-                    st.rerun()
-            
-            with col3:
-                if st.button("キャンセル", use_container_width=True):
-                    st.session_state['edit_step'] = 'select'
-                    st.rerun()
-    
-    elif st.session_state['edit_step'] == 'confirm_update':
-        st.markdown("この内容で更新しますか？")
-        st.markdown("")
-        st.markdown(f"**ユーザーID**: {st.session_state['edit_new_id']}")
-        st.markdown(f"**コード**: {st.session_state['edit_new_code']}")
-        st.markdown(f"**パスワード**: {st.session_state['edit_new_password']}")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("OK", type="primary", use_container_width=True):
-                if update_user(
-                    bq_client,
-                    st.session_state['edit_user_id'],
-                    st.session_state['edit_new_id'],
-                    st.session_state['edit_new_code'],
-                    st.session_state['edit_new_password']
-                ):
-                    st.success("ユーザー情報を更新しました")
-                    st.session_state['edit_step'] = 'select'
-                    st.rerun()
-        
-        with col2:
-            if st.button("キャンセル", use_container_width=True):
-                st.session_state['edit_step'] = 'select'
-                st.rerun()
-    
-    elif st.session_state['edit_step'] == 'confirm_delete':
-        st.warning("本当にこのユーザーを削除しますか？")
-        st.markdown("（この操作は元に戻せません）")
-        st.markdown("")
-        st.markdown(f"**ユーザーID**: {st.session_state['edit_user_id']}")
-        st.markdown(f"**コード**: {st.session_state['edit_user_code']}")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("OK", type="primary", use_container_width=True):
-                if delete_user(bq_client, st.session_state['edit_user_id']):
-                    st.success("ユーザーを削除しました")
-                    st.session_state['edit_step'] = 'select'
-                    st.rerun()
-        
-        with col2:
-            if st.button("キャンセル", use_container_width=True):
-                st.session_state['edit_step'] = 'select'
-                st.rerun()
-
-# ----------------------------------------------------------------------
-# ユーザー管理画面
-# ----------------------------------------------------------------------
-
-def show_admin_page(bq_client):
-    """
-    ユーザー管理画面
-    """
-    st.title("ユーザー管理")
-    
-    col1, col2, col3 = st.columns([1, 1, 1])
-    
-    with col1:
-        if st.button("新規登録", use_container_width=True):
-            show_register_modal(bq_client)
-    
-    with col2:
-        if st.button("編集", use_container_width=True):
-            show_edit_modal(bq_client)
-    
-    with col3:
-        if st.button("検索ツールに戻る", use_container_width=True):
-            st.session_state['show_admin_page'] = False
-            st.rerun()
-    
-    st.markdown("---")
-    st.subheader("ユーザー一覧")
-    
-    users_df = get_all_users(bq_client)
-    
-    if not users_df.empty:
-        display_df = users_df[users_df['is_alive'] == True][['id', 'code', 'pw', 'create_dt', 'update_dt']].copy()
-        
-        display_df['create_dt'] = pd.to_datetime(display_df['create_dt']).dt.strftime('%Y/%m/%d %H:%M')
-        display_df['update_dt'] = pd.to_datetime(display_df['update_dt']).dt.strftime('%Y/%m/%d %H:%M')
-        
-        display_df.columns = ['ユーザーID', 'コード', 'パスワード', '登録日', '更新日']
-        
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("ユーザーが登録されていません")
 
 # ----------------------------------------------------------------------
 # JSONデータ読み込み
@@ -691,6 +237,7 @@ def load_council_list(_bq_client):
             st.warning("会議体リストが空です")
             return []
         
+        # ministryごとにグループ化してツリー形式に変換
         tree_data = []
         ministry_groups = df.groupby('ministry')
         
@@ -957,19 +504,10 @@ def main_app(bq_client):
     
     st.sidebar.markdown("")
     
-    if st.session_state['is_admin']:
-        if st.sidebar.button("ユーザー管理", use_container_width=True):
-            st.session_state['show_admin_page'] = True
-            st.rerun()
-        
-        st.sidebar.markdown("")
-    
     if st.sidebar.button("ログアウト", use_container_width=True):
         st.session_state['authenticated'] = False
         st.session_state['user_id'] = ""
         st.session_state['session_id'] = ""
-        st.session_state['is_admin'] = False
-        st.session_state['show_admin_page'] = False
         st.session_state['selected_agencies'] = []
         st.session_state['selected_councils'] = []
         st.session_state['search_results'] = None
@@ -1101,7 +639,4 @@ bq_client = get_bigquery_client()
 if not st.session_state['authenticated']:
     show_login_form(bq_client)
 else:
-    if st.session_state.get('show_admin_page', False) and st.session_state['is_admin']:
-        show_admin_page(bq_client)
-    else:
-        main_app(bq_client)
+    main_app(bq_client)
