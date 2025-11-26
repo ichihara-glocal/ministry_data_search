@@ -588,9 +588,7 @@ def main_app(bq_client):
     
     # 検索条件の表示
     if st.session_state['search_results'] is not None:
-        st.subheader("📋 適用中の検索条件")
-        
-        search_conditions = []
+        search_conditions = ["📋 適用中の検索条件"]
         
         # キーワード
         if keyword:
