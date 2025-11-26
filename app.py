@@ -483,8 +483,7 @@ def main_app(bq_client):
                 treeData=council_tree_data,
                 treeCheckable=True,
                 allowClear=True,
-                key="council_tree",
-                help="テキストを入力すると会議体名自体を絞り込み検索できます"
+                key="council_tree"
             )
             
             current_councils = extract_agencies_from_tree_result(council_result)
