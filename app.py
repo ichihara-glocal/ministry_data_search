@@ -477,7 +477,8 @@ def main_app(bq_client):
     council_tree_data = load_council_list(bq_client)
     
     with st.sidebar:
-        st.markdown("**会議体（会議資料のみ）**")
+        st.markdown("**会議体（会議資料のみ）**",
+                    help="テキストを入力すると会議体名自体を絞り込み検索できます")
         if council_tree_data:
             council_result = st_ant_tree(
                 treeData=council_tree_data,
