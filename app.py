@@ -146,8 +146,8 @@ def check_credentials_bigquery(bq_client, user_id, password):
             SELECT id 
             FROM {auth_table_id_str}
             WHERE id = @user_id 
-              AND pw = @password
-              AND is_alive = TRUE
+            AND pw = @password
+            AND is_alive = TRUE
             LIMIT 1
         """
         
@@ -423,7 +423,10 @@ def main_app(bq_client):
     
     st.sidebar.markdown("---")
     
-    keyword = st.sidebar.text_input("**キーワード**", placeholder="キーワードを入力(複数の場合はスペースで区切る)")
+    keyword = st.sidebar.text_input(
+        "**キーワード**", 
+        placeholder="例:AI 活用",
+        help="複数の場合はスペースで区切ってください")
     
     tree_data = load_ministry_tree()
     
@@ -450,21 +453,24 @@ def main_app(bq_client):
     category_options = {item['title']: item['value'] for item in filter_choices['category']}
     selected_category_titles = st.sidebar.multiselect(
         "**カテゴリ**",
-        options=list(category_options.keys())
+        options=list(category_options.keys()),
+        help="複数選択可"
     )
     categories = [category_options[title] for title in selected_category_titles]
     
     sub_category_options = {item['title']: item['value'] for item in filter_choices['sub_category']}
     selected_sub_category_titles = st.sidebar.multiselect(
         "**資料形式**",
-        options=list(sub_category_options.keys())
+        options=list(sub_category_options.keys()),
+        help="複数選択可"
     )
     sub_categories = [sub_category_options[title] for title in selected_sub_category_titles]
     
     year_options = {item['title']: item['value'] for item in filter_choices['year']}
     selected_year_titles = st.sidebar.multiselect(
         "**年度**",
-        options=list(year_options.keys())
+        options=list(year_options.keys()),
+        help="複数選択可"
     )
     years = [year_options[title] for title in selected_year_titles]
     
@@ -477,7 +483,8 @@ def main_app(bq_client):
                 treeData=council_tree_data,
                 treeCheckable=True,
                 allowClear=True,
-                key="council_tree"
+                key="council_tree",
+                help="テキストを入力すると会議体名自体を絞り込み検索できます"
             )
             
             current_councils = extract_agencies_from_tree_result(council_result)
