@@ -452,8 +452,6 @@ def main_app(bq_client):
             
             if st.session_state['selected_agencies']:
                 st.caption(f"✓ {len(st.session_state['selected_agencies'])}件選択中")
-            else:
-                st.caption("選択なし")
         else:
             st.error("省庁ツリーの読み込みに失敗しました。")
     
@@ -474,8 +472,6 @@ def main_app(bq_client):
             
             if st.session_state['selected_categories']:
                 st.caption(f"✓ {len(st.session_state['selected_categories'])}件選択中")
-            else:
-                st.caption("選択なし")
     
     # 資料形式をツリー形式に変更
     with st.sidebar:
@@ -494,8 +490,7 @@ def main_app(bq_client):
             
             if st.session_state['selected_sub_categories']:
                 st.caption(f"✓ {len(st.session_state['selected_sub_categories'])}件選択中")
-            else:
-                st.caption("選択なし")
+
     
     # 年度をツリー形式に変更(フラットリストとして表示)
     with st.sidebar:
@@ -514,8 +509,6 @@ def main_app(bq_client):
             
             if st.session_state['selected_years']:
                 st.caption(f"✓ {len(st.session_state['selected_years'])}件選択中")
-            else:
-                st.caption("選択なし")
     
     council_tree_data = load_council_list(bq_client)
     
@@ -535,8 +528,6 @@ def main_app(bq_client):
             
             if st.session_state['selected_councils']:
                 st.caption(f"✓ {len(st.session_state['selected_councils'])}件選択中")
-            else:
-                st.caption("選択なし")
         else:
             st.info("会議体リストがありません")
     
