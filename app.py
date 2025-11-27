@@ -462,7 +462,7 @@ def main_app(bq_client):
     filter_choices = load_filter_choices()
     
     st.sidebar.subheader("🔽 条件絞り込み")
-    st.sidebar.markdown("> キーワード、省庁、カテゴリ、資料形式、年度、会議体で絞り込みが可能です。")
+    st.sidebar.markdown("##### キーワード、省庁、カテゴリ、資料形式、年度、会議体で絞り込みが可能です。")
     st.sidebar.markdown("---")
     
     # 【変更】キーワード入力欄をAND/ORに分ける
