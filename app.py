@@ -564,7 +564,7 @@ def main_app(bq_client):
     
     st.sidebar.markdown("")
     
-    if st.sidebar.button("フィルタをリセット", use_container_width=True):
+    if st.sidebar.button("フィルタをリセット", type = "secondary", use_container_width=True):
         st.session_state['selected_agencies'] = []
         st.session_state['selected_councils'] = []
         st.session_state['selected_categories'] = []
